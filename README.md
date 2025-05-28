@@ -54,7 +54,7 @@ source .venv/bin/activate
 > ```bash
 > deactivate
 > ```
-```
+
 
 ### 4. Install dependencies
 Install all required Python packages:
