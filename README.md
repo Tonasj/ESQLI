@@ -3,6 +3,8 @@
 
 ESQLI is an open-source GUI tool designed to provide an easy-to-use interface for SQL servers.
 
+![ESQLI Logo](assets/logo.svg)
+
 ---
 
 ## 🔧 Features
@@ -67,7 +69,7 @@ pip install -r requirements.txt
 ## ▶️ Running the Application
 Once installed, you can launch the GUI by running:
 ```bash
-python main.py
+python run_esqli.py
 ```
 
 ---

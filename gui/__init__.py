@@ -1,1 +1,1 @@
-from .main_window import run_app
+from .gui_runner import run_app
