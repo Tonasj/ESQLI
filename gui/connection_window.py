@@ -8,7 +8,7 @@ from PyQt5.QtCore import QSettings, QByteArray, Qt, QThread
 
 from core import SQLConnectWorker
 from gui.sql_server_explorer import SQLServerSidebar
-from gui.database_explorer_view import DatabaseExplorerView
+from gui.database_explorer_window import DatabaseExplorerWindow
 
 class ConnectionWindow(QWidget):
     def __init__(self, icon_path=None):
@@ -212,7 +212,7 @@ class ConnectionWindow(QWidget):
             explorer.activateWindow()
         else:
             # fallback (should not happen if gui_runner sets it up)
-            explorer = DatabaseExplorerView(self.db_connection, db_name, self.gui_settings)
+            explorer = DatabaseExplorerWindow(self.db_connection, db_name, self.gui_settings)
             self.open_explorers.append(explorer)
             explorer.show()
 

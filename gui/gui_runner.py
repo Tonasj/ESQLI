@@ -5,7 +5,7 @@ import sys
 import os
 
 from .connection_window import ConnectionWindow
-from .database_explorer_view import DatabaseExplorerView
+from .database_explorer_window import DatabaseExplorerWindow
 from .engine_select import EngineSelectDialog
 from core import load_sql_engine
 
@@ -44,7 +44,7 @@ def run_app():
         sys.exit(1)
         
     # ---- Launch database explorer first (empty) ----
-    explorer = DatabaseExplorerView()
+    explorer = DatabaseExplorerWindow()
     explorer.show()
 
     # ---- Launch connection window ----
