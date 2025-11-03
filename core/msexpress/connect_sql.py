@@ -42,8 +42,7 @@ def connect_to_sql(host, database="master", username=None, password=None,
 
     try:
         print(f"Connecting to SQL Server at {host}, DB: {database}")
-        conn = pyodbc.connect(conn_str)
-        print("Connection successful.")
+        conn = pyodbc.connect(conn_str, timeout=5)
         return conn
     except pyodbc.Error as e:
         raise RuntimeError(f"Connection failed: {e}")

@@ -1,5 +1,5 @@
 import pytest
-from core.connect_sql import connect_to_sql
+from core.msexpress.connect_sql import connect_to_sql
 
 def test_empty_host():
     with pytest.raises(ValueError, match="Empty host address"):
