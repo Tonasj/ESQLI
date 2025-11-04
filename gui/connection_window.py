@@ -7,7 +7,6 @@ from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import QSettings, QByteArray, Qt, QThread
 
 from core import SQLConnectWorker
-from gui.sql_server_explorer import SQLServerSidebar
 from gui.database_explorer_window import DatabaseExplorerWindow
 
 class ConnectionWindow(QWidget):
@@ -100,11 +99,6 @@ class ConnectionWindow(QWidget):
         self.connect_widget.setLayout(form_layout)  
         self.splitter.addWidget(self.connect_widget)  
 
-        # Right panel placeholder  
-        self.placeholder_right = QLabel("Connect to a database to see tables")  
-        self.placeholder_right.setAlignment(Qt.AlignCenter)  
-        self.splitter.addWidget(self.placeholder_right)  
-
     def update_auth_ui(self):  
         is_windows = self.windows_auth_radio.isChecked()  
         self.username_input.setDisabled(is_windows)  
@@ -148,9 +142,7 @@ class ConnectionWindow(QWidget):
         self.label.setText("Connected successfully!")  
         self.button.setEnabled(True)  
         self.host_input.setDisabled(False)  
-
-        # Show sidebar
-        self.show_sidebar()
+        self.open_database_explorer()
 
     def on_connection_error(self, error_msg):
         self.last_error_message = error_msg
@@ -158,31 +150,6 @@ class ConnectionWindow(QWidget):
         self.button.setEnabled(True)
         self.host_input.setDisabled(False)
         QMessageBox.critical(self, "Connection Error", f"Failed to connect:\n{error_msg}")
-
-    def show_sidebar(self):  
-        if not self.db_connection:  
-            print("[ERROR] Cannot show sidebar: db_connection is None")  
-            return  
-
-        try:  
-            if hasattr(self, 'placeholder_right'):  
-                self.placeholder_right.setParent(None)  
-                del self.placeholder_right  
-            if hasattr(self, 'sidebar'):  
-                self.sidebar.setParent(None)  
-                del self.sidebar  
-
-            self.sidebar = SQLServerSidebar(
-                self.db_connection, 
-                database_selected_callback=self.open_database_explorer
-            )
-            self.splitter.addWidget(self.sidebar)  
-            self.splitter.setSizes([300, 200])  
-            print("[DEBUG] Sidebar shown successfully")  
-
-        except Exception as e:  
-            print(f"[ERROR] Failed to create sidebar: {e}")  
-            QMessageBox.critical(self, "Sidebar Error", f"Failed to create sidebar:\n{e}")  
 
     def closeEvent(self, event):  
         self.save_window_settings()  
@@ -199,22 +166,42 @@ class ConnectionWindow(QWidget):
             else:  
                 self.restoreGeometry(QByteArray(geometry))
 
-    def open_database_explorer(self, db_name):
-        # If no open_explorers list, create it
-        if not hasattr(self, 'open_explorers'):
-            self.open_explorers = []
+    def open_database_explorer(self, db_name=None):
+        """Open (or refresh) the Database Explorer window after connecting."""
+        try:
+            if not hasattr(self, "open_explorers"):
+                self.open_explorers = []
 
-        # Reuse the first explorer if it exists
-        if self.open_explorers:
-            explorer = self.open_explorers[0]
-            explorer.load_database_data(self.db_connection, db_name)
-            explorer.raise_()  # bring to front
-            explorer.activateWindow()
-        else:
-            # fallback (should not happen if gui_runner sets it up)
-            explorer = DatabaseExplorerWindow(self.db_connection, db_name, self.gui_settings)
-            self.open_explorers.append(explorer)
-            explorer.show()
+            if self.open_explorers:
+                # Reuse existing explorer
+                explorer = self.open_explorers[0]
+                explorer.conn = self.db_connection
+                explorer.selected_database = db_name
 
-        self.save_window_settings()
-        self.close()
+                # ensure explorer knows which connection window to return to
+                explorer.connection_window = self
+
+                # --- Clear and repopulate tree with all databases ---
+                explorer.tree.clear()
+                explorer.populate_databases_tree()
+
+                # Show and raise explorer
+                explorer.show()
+                explorer.raise_()
+                explorer.activateWindow()
+                print("[DEBUG] Reusing existing DatabaseExplorerWindow; refreshed tree.")
+            else:
+                # Create a new one and pass a reference to this connection window
+                explorer = DatabaseExplorerWindow(connection=self.db_connection, database=db_name, connection_window=self)
+                self.open_explorers.append(explorer)
+                explorer.show()
+                print("[DEBUG] Created new DatabaseExplorerWindow.")
+
+            # prefer hiding the connection window instead of closing it,
+            # so it can be reused when user disconnects
+            self.save_window_settings()
+            self.hide()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open Database Explorer:\n{e}")
+            print(f"⚠️Error opening explorer: {e}")
