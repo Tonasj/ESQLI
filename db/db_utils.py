@@ -1,4 +1,6 @@
 import sys
+import re
+import pandas as pd
 
 def fetch_databases(connection):
     """Return a list of database names."""
@@ -83,16 +85,90 @@ def alter_column_type(connection, table_name, column_name, new_type):
     )
     connection.commit()
 
-def execute_custom_query(connection, query):
-    """Execute a custom SQL query and return column names and rows if applicable."""
+def fetch_full_table_paginated(connection, table_name, chunk_size=10000):
+    """Generator that yields rows from a table in chunks."""
     cursor = connection.cursor()
-    cursor.execute(query)
+    cursor.execute(f"SELECT COUNT(*) FROM [{table_name}]")
+    total_rows = cursor.fetchone()[0]
+    if total_rows == 0:
+        return [], []
 
-    try:
+    cursor.execute(f"SELECT TOP 0 * FROM [{table_name}]")
+    columns = [desc[0] for desc in cursor.description]
+
+    offset = 0
+    while offset < total_rows:
+        query = f"""
+            SELECT * FROM [{table_name}]
+            ORDER BY (SELECT NULL)
+            OFFSET {offset} ROWS FETCH NEXT {chunk_size} ROWS ONLY;
+        """
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        if not rows:
+            break
+        yield columns, rows
+        offset += len(rows)
+
+def fetch_query_with_pagination(connection, query, page=0, page_size=500):
+    """
+    Execute a SQL query with proper pagination.
+    Applies OFFSET/FETCH to the final SELECT statement only.
+    Compatible with SQL Server, and ignores USE/COMMENT lines.
+    """
+    cursor = connection.cursor()
+    query = query.strip()
+
+    # Normalize spacing and strip trailing semicolons/newlines
+    query = re.sub(r'\s+', ' ', query).strip().rstrip(';')
+
+    # Find last SELECT statement (ignoring comments and USE)
+    select_match = re.search(r'(select\b.*)$', query, flags=re.IGNORECASE)
+    if not select_match:
+        print("[DEBUG] No SELECT statement found; executing raw query.")
+        cursor.execute(query)
+        rows = cursor.fetchall() if cursor.description else []
         columns = [desc[0] for desc in cursor.description] if cursor.description else []
-        rows = cursor.fetchall() if columns else []
-    except Exception:
-        columns, rows = [], []
+        connection.commit()
+        return columns, rows
+
+    # Split into "before SELECT" and "SELECT part"
+    before_select = query[:select_match.start()].strip()
+    select_stmt = select_match.group(1).strip()
+
+    # Add ORDER BY if missing
+    if re.search(r'\border\s+by\b', select_stmt, flags=re.IGNORECASE):
+        paginated_select = (
+            f"{select_stmt} OFFSET {page * page_size} ROWS FETCH NEXT {page_size} ROWS ONLY"
+        )
+    else:
+        paginated_select = (
+            f"{select_stmt} ORDER BY (SELECT NULL) OFFSET {page * page_size} ROWS FETCH NEXT {page_size} ROWS ONLY"
+        )
+
+    # Combine back into one runnable SQL batch
+    final_query = before_select + "\n" + paginated_select if before_select else paginated_select
+
+    print(f"[DEBUG] Running paginated SQL:\n{final_query}\n")
+
+    cursor.execute(final_query)
+
+    columns, rows = [], []
+    # Handle multi-result sets
+    while True:
+        if cursor.description:
+            columns = [desc[0] for desc in cursor.description]
+            rows = cursor.fetchall()
+            break
+        if not cursor.nextset():
+            break
 
     connection.commit()
     return columns, rows
+
+
+def get_table_row_count(connection, table_name):
+    """Return total number of rows in a table."""
+    cursor = connection.cursor()
+    cursor.execute(f"SELECT COUNT(*) FROM [{table_name}]")
+    return cursor.fetchone()[0]

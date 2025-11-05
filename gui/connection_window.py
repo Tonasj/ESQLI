@@ -1,37 +1,37 @@
 import os
 from PyQt5.QtWidgets import (
 QWidget, QLabel, QVBoxLayout, QComboBox, QPushButton,
-QLineEdit, QHBoxLayout, QSplitter, QMessageBox, QRadioButton, QButtonGroup, QFormLayout
+QLineEdit, QSplitter, QMessageBox, QRadioButton, 
+QButtonGroup, QFormLayout, QDesktopWidget
 )
 from PyQt5.QtGui import QIcon
-from PyQt5.QtCore import QSettings, QByteArray, Qt, QThread
+from PyQt5.QtCore import Qt, QThread
 
 from core import SQLConnectWorker
-from gui.database_explorer_window import DatabaseExplorerWindow
+from gui.database_explorer.main_window import DatabaseExplorerWindow
+from gui.window_utils import setup_app_settings, restore_window_settings, save_window_settings
 
 class ConnectionWindow(QWidget):
     def __init__(self, icon_path=None):
         super().__init__()
-        base_folder = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  
-        config_folder = os.path.join(base_folder, "config")  
-        os.makedirs(config_folder, exist_ok=True)  
+        self.gui_settings, self.app_settings = setup_app_settings()
+        self.icon_path = icon_path
+        self.window_name = "ConnectionWindow"
+        self.db_connection = None
+        self.last_error_message = ""
 
-        gui_settings_path = os.path.join(config_folder, "gui_settings.ini")  
-        app_settings_path = os.path.join(config_folder, "app_settings.ini")  
+        self.init_ui()
+        restore_window_settings(self)
 
-        self.gui_settings = QSettings(gui_settings_path, QSettings.IniFormat)  
-        self.app_settings = QSettings(app_settings_path, QSettings.IniFormat)  
+    def init_ui(self):
+        self.setWindowTitle("ESQLI - SQL Interface")
+        self.resize(500, 200)  # use resize instead of setGeometry
 
-        self.icon_path = icon_path  
-        self.db_connection = None  
-        self.last_error_message = ""  
-
-        self.init_ui()  
-        self.restore_window_settings()  
-
-    def init_ui(self):  
-        self.setWindowTitle("ESQLI - SQL Interface")  
-        self.setGeometry(100, 100, 800, 600)  
+        # Center the window on the screen
+        qr = self.frameGeometry()
+        cp = QDesktopWidget().availableGeometry().center()
+        qr.moveCenter(cp)
+        self.move(qr.topLeft())
 
         if self.icon_path:  
             self.setWindowIcon(QIcon(self.icon_path))  
@@ -151,21 +151,6 @@ class ConnectionWindow(QWidget):
         self.host_input.setDisabled(False)
         QMessageBox.critical(self, "Connection Error", f"Failed to connect:\n{error_msg}")
 
-    def closeEvent(self, event):  
-        self.save_window_settings()  
-        super().closeEvent(event)  
-
-    def save_window_settings(self):  
-        self.gui_settings.setValue("geometry", self.saveGeometry())  
-
-    def restore_window_settings(self):  
-        geometry = self.gui_settings.value("geometry")  
-        if geometry:  
-            if isinstance(geometry, QByteArray):  
-                self.restoreGeometry(geometry)  
-            else:  
-                self.restoreGeometry(QByteArray(geometry))
-
     def open_database_explorer(self, db_name=None):
         """Open (or refresh) the Database Explorer window after connecting."""
         try:
@@ -175,33 +160,36 @@ class ConnectionWindow(QWidget):
             if self.open_explorers:
                 # Reuse existing explorer
                 explorer = self.open_explorers[0]
-                explorer.conn = self.db_connection
+                explorer.controller.conn = self.db_connection
                 explorer.selected_database = db_name
-
-                # ensure explorer knows which connection window to return to
                 explorer.connection_window = self
 
-                # --- Clear and repopulate tree with all databases ---
-                explorer.tree.clear()
-                explorer.populate_databases_tree()
+                # --- Clear and repopulate database list ---
+                explorer.tree_panel.clear()
+                explorer.refresh_databases()  # public helper method in new class
 
-                # Show and raise explorer
                 explorer.show()
                 explorer.raise_()
                 explorer.activateWindow()
                 print("[DEBUG] Reusing existing DatabaseExplorerWindow; refreshed tree.")
             else:
-                # Create a new one and pass a reference to this connection window
-                explorer = DatabaseExplorerWindow(connection=self.db_connection, database=db_name, connection_window=self)
+                # Create new explorer instance
+                explorer = DatabaseExplorerWindow(
+                    connection=self.db_connection, database=db_name, connection_window=self
+                )
                 self.open_explorers.append(explorer)
                 explorer.show()
                 print("[DEBUG] Created new DatabaseExplorerWindow.")
 
-            # prefer hiding the connection window instead of closing it,
-            # so it can be reused when user disconnects
-            self.save_window_settings()
+            # Hide connection window but keep it in memory
+            save_window_settings(self)
             self.hide()
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open Database Explorer:\n{e}")
-            print(f"⚠️Error opening explorer: {e}")
+            print(f"⚠️ Error opening explorer: {e}")
+
+
+    def closeEvent(self, event):
+        save_window_settings(self)
+        super().closeEvent(event)

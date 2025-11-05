@@ -1,5 +1,6 @@
+from PyQt5.QtWidgets import QTextEdit, QCompleter
+from PyQt5.QtCore import Qt, QStringListModel, QRegularExpression
 from PyQt5.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont, QTextCursor
-from PyQt5.QtCore import QRegularExpression
 import re
 
 SQL_KEYWORDS = [
@@ -142,3 +143,72 @@ class SQLHighlighter(QSyntaxHighlighter):
             self.editor.setTextCursor(cursor)
 
         self._is_updating = False
+
+class SQLEditor(QTextEdit):
+    """QTextEdit subclass with SQL auto-completion"""
+    def __init__(self, parent=None, get_table_names_callback=None):
+        super().__init__(parent)
+        self.get_table_names_callback = get_table_names_callback  # function to fetch tables dynamically
+        self.completer = None
+        self.init_completer()
+
+    def init_completer(self):
+        """Setup auto-completer with SQL keywords and tables"""
+        words = SQL_KEYWORDS + SQL_TYPES + SQL_FUNCTIONS
+        if self.get_table_names_callback:
+            words += self.get_table_names_callback()  # add table names from current DB
+
+        self.model = QStringListModel(words)
+        self.completer = QCompleter(self.model, self)
+        self.completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self.completer.setFilterMode(Qt.MatchContains)
+        self.completer.setWidget(self)
+        self.completer.setCompletionMode(QCompleter.PopupCompletion)
+        self.completer.activated.connect(self.insert_completion)
+
+    def insert_completion(self, completion):
+        cursor = self.textCursor()
+        cursor.select(QTextCursor.WordUnderCursor)
+        cursor.insertText(completion)
+        self.setTextCursor(cursor)
+
+    def keyPressEvent(self, event):
+        """Handle typing to trigger completer"""
+        if self.completer and self.completer.popup().isVisible():
+            if event.key() in (Qt.Key_Enter, Qt.Key_Return):
+                event.ignore()
+                return
+            elif event.key() == Qt.Key_Tab:
+                # ✅ Insert the currently highlighted or first completion
+                popup = self.completer.popup()
+                current_index = popup.currentIndex()
+                if not current_index.isValid():
+                    # fallback: pick the first suggestion
+                    current_index = self.completer.completionModel().index(0, 0)
+                completion = self.completer.completionModel().data(current_index)
+                if completion:
+                    self.insert_completion(completion)
+                self.completer.popup().hide()
+                return
+            elif event.key() == Qt.Key_Escape:
+                self.completer.popup().hide()
+                return
+
+        super().keyPressEvent(event)
+
+        # Determine current word to match against completer
+        cursor = self.textCursor()
+        cursor.select(QTextCursor.WordUnderCursor)
+        current_text = cursor.selectedText()
+
+        if len(current_text) >= 2:  # trigger after 2 characters
+            # refresh completion list dynamically
+            self.completer.model().setStringList(
+                SQL_KEYWORDS + SQL_TYPES + SQL_FUNCTIONS +
+                (self.get_table_names_callback() if self.get_table_names_callback else [])
+            )
+            self.completer.setCompletionPrefix(current_text)
+            cr = self.cursorRect()
+            cr.setWidth(self.completer.popup().sizeHintForColumn(0)
+                        + self.completer.popup().verticalScrollBar().sizeHint().width())
+            self.completer.complete(cr)  # show popup

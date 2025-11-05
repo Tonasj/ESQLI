@@ -5,7 +5,7 @@ import sys
 import os
 
 from .connection_window import ConnectionWindow
-from .database_explorer_window import DatabaseExplorerWindow
+from .database_explorer.main_window import DatabaseExplorerWindow
 from .engine_select import EngineSelectDialog
 from core import load_sql_engine
 

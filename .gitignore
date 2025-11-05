@@ -5,3 +5,11 @@ __pycache__/
 
 #Settings
 *.ini
+
+#Legacy
+/legacy
+
+#Export tests
+*.csv
+*.json
+*.xlsx

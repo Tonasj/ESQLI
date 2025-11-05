@@ -1,6 +1,7 @@
+import re
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QLabel, QTextEdit, QPushButton, QHBoxLayout,
-    QWidget, QScrollArea, QApplication, QLineEdit, QFrame, QLayout, QSizePolicy
+    QVBoxLayout, QLabel, QTextEdit, QPushButton, QHBoxLayout, QWidget, 
+    QScrollArea, QApplication, QLineEdit, QFrame, QLayout, QSizePolicy, QMessageBox
 )
 from PyQt5.QtCore import Qt, QSize, QPoint, QRect
 from PyQt5.QtGui import QFont
@@ -81,12 +82,15 @@ class FlowLayout(QLayout):
 # --- CommonQueriesDialog ---
 class CommonQueriesDialog(QWidget):
     def __init__(self, parent=None):
-        super().__init__(parent)
-
-        self.setWindowTitle("Common SQL Queries")
+        super().__init__(None)
+        self.parent_window = parent
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setWindowFlags(Qt.Window | Qt.WindowCloseButtonHint | Qt.WindowMinMaxButtonsHint)
+        self.setWindowModality(Qt.NonModal)
         self.setGeometry(200, 150, 720, 420)
         self.setMinimumSize(QSize(700, 500))
-        self.setWindowFlags(self.windowFlags() | Qt.Window)
+
+        self.setWindowTitle("Common SQL Queries")
 
         self.all_items = []
         self.groups = {}
@@ -209,6 +213,13 @@ class CommonQueriesDialog(QWidget):
         copy_btn.setFixedWidth(100)
         copy_btn.clicked.connect(lambda _, q=query: self.copy_to_clipboard(q))
         btn_layout.addWidget(copy_btn, alignment=Qt.AlignLeft)
+
+        add_btn = QPushButton("➕ Add to Editor")
+        add_btn.setFixedWidth(140)
+        add_btn.setToolTip("Insert this query into the current query editor")
+        add_btn.clicked.connect(lambda _, q=query: self.add_to_editor(q))
+        btn_layout.addWidget(add_btn, alignment=Qt.AlignLeft)
+
         btn_layout.addStretch()
         vbox.addLayout(btn_layout)
 
@@ -238,3 +249,55 @@ class CommonQueriesDialog(QWidget):
             if isinstance(widget, QLabel) and group_name in widget.text():
                 self.scroll_area.verticalScrollBar().setValue(widget.y())
                 break
+
+    def add_to_editor(self, query):
+        """Insert the query into the DatabaseExplorer's current editor, with contextual replacements."""
+        try:
+            explorer = self.parent_window
+            if not explorer or not hasattr(explorer, "query_panel"):
+                QMessageBox.warning(self, "Unavailable", "No active Database Explorer editor found.")
+                return
+
+            query_panel = getattr(explorer, "query_panel", None)
+            if not query_panel or not hasattr(query_panel, "tabs"):
+                QMessageBox.warning(self, "Unavailable", "No active Query Editor found.")
+                return
+
+            current_tab = query_panel.tabs.currentWidget()
+            if not current_tab or not hasattr(current_tab, "editor"):
+                QMessageBox.warning(self, "No Editor", "No active query editor found.")
+                return
+
+            editor = current_tab.editor
+
+            # --- Contextual replacements ---
+            selected_db = getattr(explorer, "selected_database", None)
+            selected_table = getattr(explorer, "current_table", None)
+
+            replaced_query = query
+            if selected_db:
+                replaced_query = re.sub(r"\[DatabaseName\]", selected_db, replaced_query, flags=re.IGNORECASE)
+            if selected_table:
+                replaced_query = re.sub(r"\[TableName\]", selected_table, replaced_query, flags=re.IGNORECASE)
+
+            contextual_prefix = ""
+            if selected_db:
+                contextual_prefix += f"USE {selected_db};\n"
+                if selected_table:
+                    contextual_prefix += f"-- Current table: `{selected_table}`\n"
+
+            # --- Insert into editor ---
+            if editor.toPlainText().strip():
+                editor.append("\n" + replaced_query.strip() + "\n")
+            else:
+                editor.setPlainText(contextual_prefix + replaced_query.strip() + "\n")
+
+            # Focus the query editor
+            explorer._switch_mode("query")
+            explorer.showNormal()
+            explorer.raise_()
+            explorer.activateWindow()
+            editor.setFocus()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to add query to editor:\n{e}")
