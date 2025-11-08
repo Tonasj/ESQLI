@@ -4,6 +4,19 @@ class DBController:
     def __init__(self, conn):
         self.conn = conn
         self.current_db = None
+        
+        # --- Enable autocommit for DDL operations ---
+        try:
+            if hasattr(self.conn, "autocommit"):
+                self.conn.autocommit = True
+            else:
+                raw = getattr(self.conn, "connection", None)
+                if raw is not None and hasattr(raw, "autocommit"):
+                    raw.autocommit = True
+            print("[INFO] Autocommit enabled for DB connection.")
+        except Exception as e:
+            print(f"[WARN] Could not enable autocommit: {e}")
+        print(f"[DEBUG] Autocommit status: {getattr(self.conn, 'autocommit', 'n/a')}")
 
     # -------- DB listing / selection --------
     def fetch_databases(self):
@@ -39,6 +52,27 @@ class DBController:
     def alter_column_type(self, table, column, new_type):
         from db.db_utils import alter_column_type
         return alter_column_type(self.conn, table, column, new_type)
+    
+    def set_primary_key(self, table, column, enabled):
+        from db.db_utils import set_primary_key
+        return set_primary_key(self.conn, table, column, enabled)
+
+    def set_auto_increment(self, table, column, enabled):
+        from db.db_utils import set_auto_increment
+        return set_auto_increment(self.conn, table, column, enabled)
+    
+    def set_nullable(self, table, column, enabled):
+        from db.db_utils import set_nullable
+        return set_nullable(self.conn, table, column, enabled)
+    
+    def fetch_column_info(self, table_name, column_name):
+        from db.db_utils import fetch_column_info
+        return fetch_column_info(self.conn, table_name, column_name)
+
+    def update_table_cell(self, table, column, row_index, new_value):
+        from db.db_utils import update_table_cell
+        return update_table_cell(self.conn, table, column, row_index, new_value)
+
 
     # -------- DDL --------
     def create_table(self, name, columns):
@@ -48,6 +82,10 @@ class DBController:
     def create_database(self, name):
         from db.db_utils import create_database
         return create_database(self.conn, name)
+    
+    def add_table_item(self, table, values):
+        from db.db_utils import insert_row
+        return insert_row(self.conn, table, values)
 
     # -------- Query --------
     def fetch_query_with_pagination(self, query, page, page_size):

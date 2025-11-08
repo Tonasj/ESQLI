@@ -4,7 +4,7 @@ QPushButton, QLabel, QTabWidget,
 QWidget as QtWidget, QCheckBox,
 QSizePolicy)
 from PyQt5.QtCore import pyqtSignal, Qt
-from gui.query_editor_utils import SQLHighlighter, SQLEditor
+from gui.gui_helpers.query_editor_utils import SQLHighlighter, SQLEditor
 from core.file_utils import save_query_to_file, open_query_from_file
 
 

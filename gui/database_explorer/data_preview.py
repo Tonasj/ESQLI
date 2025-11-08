@@ -1,15 +1,17 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QHeaderView,
-    QPushButton, QTableWidget, QTableWidgetItem, 
+    QPushButton, QTableWidget, QTableWidgetItem, QMessageBox
 )
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import pyqtSignal, Qt, QTimer
 
 
 class DataPreviewPanel(QWidget):
     exportCurrentRequested = pyqtSignal(list, list, str)  # headers, rows(list of lists), label
     exportFullTableRequested = pyqtSignal(str)            # table name
     exportFullQueryRequested = pyqtSignal(str)            # full SQL text
+    addTableItemRequested = pyqtSignal(str)               # add item to table
     pageChangeRequested = pyqtSignal(int, int)            # new_page, page_size
+    cellUpdateRequested = pyqtSignal(str, str, object, object)  # table, column, pk_or_row, new_value
 
     def __init__(self):
         super().__init__()
@@ -20,7 +22,17 @@ class DataPreviewPanel(QWidget):
         self._page = 0
         self._page_size = 500
         self._current_query = None
+        self._table_widget = None
+        self._pk_index = 0
+        self._has_primary_key = False  # <-- new flag
 
+    # ------- New helper -------
+    def set_primary_key_info(self, has_pk: bool, pk_index: int = 0):
+        """Called by parent to inform whether the current table has a PK."""
+        self._has_primary_key = has_pk
+        self._pk_index = pk_index
+
+    # ------- Core UI -------
     def _build(self):
         self.layout_ = QVBoxLayout(self)
         self.layout_.setContentsMargins(0, 0, 0, 0)
@@ -51,8 +63,11 @@ class DataPreviewPanel(QWidget):
             return
         self._headers, self._rows, self._label = list(columns), list(rows), label
 
-        # Export row
-        btn_row = QWidget(); br = QHBoxLayout(btn_row); br.setContentsMargins(0,0,0,0)
+        # --- Export buttons ---
+        btn_row = QWidget()
+        br = QHBoxLayout(btn_row)
+        br.setContentsMargins(0, 0, 0, 0)
+
         export_current = QPushButton("📤 Export current...")
         export_current.clicked.connect(lambda: self.exportCurrentRequested.emit(self._headers, self._rows, label))
         br.addWidget(export_current)
@@ -63,18 +78,32 @@ class DataPreviewPanel(QWidget):
         else:
             export_full = QPushButton("📦 Export full table...")
             export_full.clicked.connect(lambda: self.exportFullTableRequested.emit(label))
-        br.addWidget(export_full); br.addStretch()
+            add_item = QPushButton("🆕 Add new item")
+            add_item.clicked.connect(lambda: self.addTableItemRequested.emit(label))
+            br.addWidget(add_item)
+
+        br.addWidget(export_full)
+        br.addStretch()
         self.layout_.addWidget(btn_row)
 
-        # Table
-        table = QTableWidget(); table.setColumnCount(len(columns)); table.setRowCount(len(rows))
+        # --- Table setup ---
+        table = QTableWidget()
+        table.setColumnCount(len(columns))
+        table.setRowCount(len(rows))
         table.setHorizontalHeaderLabels(columns)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        table.horizontalHeader().setStretchLastSection(True)
-        # Insert rows (with correct global numbering)
+        table.horizontalHeader().setStretchLastSection(False)
+
+        self._table_widget = table
+
+        # Fill rows
         for i, r in enumerate(rows):
             for j, v in enumerate(r):
                 item = QTableWidgetItem(str(v))
+                if not query_mode:
+                    item.setFlags(item.flags() | Qt.ItemIsEditable)
+                else:
+                    item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
                 table.setItem(i, j, item)
 
         if query_mode:
@@ -84,7 +113,13 @@ class DataPreviewPanel(QWidget):
 
         self.layout_.addWidget(table)
 
-        # Pagination (only for query mode)
+        # --- Enable editing only in table mode ---
+        if not query_mode:
+            table.itemChanged.connect(lambda item: self._on_cell_edited(item, label))
+        else:
+            table.itemChanged.disconnect()
+
+        # --- Pagination (query mode only) ---
         if query_mode:
             nav = QWidget()
             nl = QHBoxLayout(nav)
@@ -102,3 +137,43 @@ class DataPreviewPanel(QWidget):
             nl.addWidget(next_btn)
             nl.addStretch()
             self.layout_.addWidget(nav)
+
+    # ------- Editing -------
+    def _on_cell_edited(self, item, table_name):
+        """Prompt to confirm and emit an update when a cell is edited."""
+        row = item.row()
+        col = item.column()
+        new_value = item.text()
+        column_name = self._headers[col]
+        old_value = str(self._rows[row][col]) if row < len(self._rows) else None
+
+        if new_value == old_value:
+            return
+
+        # Choose identifier (PK value or row index)
+        if self._has_primary_key:
+            try:
+                pk_value = self._rows[row][self._pk_index]
+            except Exception:
+                pk_value = None
+        else:
+            pk_value = row  # fallback: use row index
+
+        def confirm_and_emit():
+            confirm = QMessageBox.question(
+                self,
+                "Confirm Update",
+                f"Update column '{column_name}' in row {row + 1}?\n\n"
+                f"Old value: {old_value}\nNew value: {new_value}",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if confirm == QMessageBox.No:
+                self._table_widget.blockSignals(True)
+                item.setText(old_value)
+                self._table_widget.blockSignals(False)
+                return
+
+            # Emit: table, column, pk_or_row, new value
+            self.cellUpdateRequested.emit(table_name, column_name, pk_value, new_value)
+
+        QTimer.singleShot(0, confirm_and_emit)

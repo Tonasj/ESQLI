@@ -1,11 +1,13 @@
+import sys
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QSplitter, QMessageBox, 
-    QPushButton, QHBoxLayout, QDesktopWidget, QSizePolicy
+    QPushButton, QHBoxLayout, QDesktopWidget, QSizePolicy,
+    QCheckBox
 )
 from PyQt5.QtCore import Qt
 
-from gui.integrated_console import IntegratedConsole, redirect_std
-from gui.window_utils import setup_app_settings, restore_window_settings, save_window_settings
+from gui.gui_helpers.integrated_console import IntegratedConsole, redirect_std
+from gui.gui_helpers.window_utils import setup_app_settings, restore_window_settings, save_window_settings
 
 from .tree_panel import DatabaseTreePanel
 from .table_designer import TableDesignerPanel
@@ -29,6 +31,7 @@ class DatabaseExplorerWindow(QWidget):
         self.last_query_results = None
         self.last_executed_query = None
         self.current_mode = "table"   # <--- new mode tracker
+        debug_enabled = self.app_settings.value("debug_enabled", False, type=bool)
 
         self.setWindowTitle(
             f"Database Explorer - {database}" if database else "Database Explorer"
@@ -37,7 +40,7 @@ class DatabaseExplorerWindow(QWidget):
         self._build_ui()
         self._connect_signals()
 
-        redirect_std(self.console)
+        self.stdout_stream, self.stderr_stream = redirect_std(self.console, debug_enabled)
         restore_window_settings(self)
 
         if self.controller.conn and not self.selected_database:
@@ -55,7 +58,7 @@ class DatabaseExplorerWindow(QWidget):
         self.move(qr.topLeft())
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
+        root.setContentsMargins(5, 5, 5, 5)
 
         # --- Main vertical splitter (top + bottom) ---
         self.main_splitter = QSplitter(Qt.Vertical)
@@ -98,7 +101,7 @@ class DatabaseExplorerWindow(QWidget):
 
         # Button styles
         for btn in (self.back_btn, self.table_mode_btn, self.query_mode_btn):
-            btn.setMinimumHeight(18)
+            btn.setMinimumHeight(24)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             btn.setStyleSheet("""
                 QPushButton {
@@ -129,10 +132,26 @@ class DatabaseExplorerWindow(QWidget):
         # ---------------- BOTTOM SPLIT ----------------
         self.bottom_splitter = QSplitter(Qt.Vertical)
         self.data_panel = DataPreviewPanel()
+
+        console_container = QWidget()
+        console_layout = QVBoxLayout(console_container)
+        console_layout.setContentsMargins(0, 0, 0, 0)
+        console_layout.setSpacing(2)
+
         self.console = IntegratedConsole()
+        self.debug_checkbox = QCheckBox("Enable debug messages")
+        debug_enabled = self.app_settings.value("debug_enabled", False, type=bool)
+        self.debug_checkbox.setChecked(debug_enabled)
+
+        console_layout.addWidget(self.console, 1)
+        console_layout.addWidget(self.debug_checkbox, 0, Qt.AlignLeft)
+        self.left_panel.setMinimumWidth(200)
+        self.right_panel.setMinimumWidth(400)
+        self.data_panel.setMinimumHeight(100)
+        self.console.setMinimumHeight(100)
 
         self.bottom_splitter.addWidget(self.data_panel)
-        self.bottom_splitter.addWidget(self.console)
+        self.bottom_splitter.addWidget(console_container)
         self.bottom_splitter.setStretchFactor(0, 4)
         self.bottom_splitter.setStretchFactor(1, 1)
         self.bottom_splitter.setSizes([400, 200])
@@ -151,6 +170,14 @@ class DatabaseExplorerWindow(QWidget):
                 height: 1px;
             }
         """)
+        self.top_splitter.setCollapsible(0, False)
+        self.top_splitter.setCollapsible(1, False)
+
+        self.bottom_splitter.setCollapsible(0, False)
+        self.bottom_splitter.setCollapsible(1, False)
+
+        self.main_splitter.setCollapsible(0, False)
+        self.main_splitter.setCollapsible(1, False)
 
         root.addWidget(self.main_splitter)
 
@@ -165,6 +192,9 @@ class DatabaseExplorerWindow(QWidget):
         self.table_panel.addColumnRequested.connect(self._add_column)
         self.table_panel.renameColumnRequested.connect(self._rename_column)
         self.table_panel.changeTypeRequested.connect(self._alter_column_type)
+        self.table_panel.primaryKeyToggled.connect(self._set_primary_key)
+        self.table_panel.autoIncrementToggled.connect(self._set_auto_increment)
+        self.table_panel.nullableToggled.connect(self._set_nullable)
 
         self.query_panel.runQueryRequested.connect(self._run_query)
         self.query_panel.openCommonQueriesRequested.connect(self._open_common_queries)
@@ -172,13 +202,26 @@ class DatabaseExplorerWindow(QWidget):
         self.data_panel.exportCurrentRequested.connect(self._export_current)
         self.data_panel.exportFullTableRequested.connect(self._export_full_table)
         self.data_panel.exportFullQueryRequested.connect(self._export_full_query)
+        self.data_panel.addTableItemRequested.connect(self._add_table_item)
         self.data_panel.pageChangeRequested.connect(self._change_query_page)
+        self.data_panel.cellUpdateRequested.connect(self._update_cell_value)
 
         self.back_btn.clicked.connect(self._handle_back_button)
 
         # --- NEW: mode toggle buttons ---
         self.table_mode_btn.clicked.connect(lambda: self._switch_mode("table"))
         self.query_mode_btn.clicked.connect(lambda: self._switch_mode("query"))
+
+        self.debug_checkbox.toggled.connect(self._on_toggle_debug)
+    
+    # ---------------- Debug messages ----------------
+    def _on_toggle_debug(self, enabled: bool):
+        self.app_settings.setValue("debug_enabled", enabled)
+        if hasattr(self.console, "stdout_stream"):
+            self.console.stdout_stream.debug_enabled = enabled
+        if hasattr(self.console, "stderr_stream"):
+            self.console.stderr_stream.debug_enabled = enabled
+        print(f"[INFO] Debug messages {'enabled' if enabled else 'disabled'}")
 
     # ---------------- Mode switching ----------------
     def _switch_mode(self, mode: str):
@@ -255,6 +298,9 @@ class DatabaseExplorerWindow(QWidget):
             schema = self.controller.fetch_table_schema(table_name)  # list[(name, type)]
             self.table_panel.load_schema(schema)
 
+            has_pk = any(col[2] for col in schema)  # col[2] is is_primary
+            self.data_panel.set_primary_key_info(has_pk, pk_index=0)
+
             # Update query context
             tables = self.controller.fetch_tables()
             self.query_panel.set_context(
@@ -264,6 +310,32 @@ class DatabaseExplorerWindow(QWidget):
             QMessageBox.critical(self, "Error", f"Failed to load table:\n{e}")
 
     # ---------------- Table Designer actions ----------------
+    def _add_table_item(self, table_name):
+        """Open a dialog to add a new row to the current table."""
+        if not self.current_table:
+            QMessageBox.warning(self, "No Table", "Open a table first.")
+            return
+
+        try:
+            # Fetch current table schema
+            schema = self.controller.fetch_table_schema(self.current_table)
+
+            from gui.other_windows.dialog import AddRowDialog
+            dialog = AddRowDialog(self, self.current_table, schema)
+
+            if dialog.exec_() == dialog.Accepted:
+                values = dialog.get_values()
+                self.controller.add_table_item(self.current_table, values)
+                QMessageBox.information(
+                    self,
+                    "Row added",
+                    f"A new row has been added to '{self.current_table}'."
+                )
+                # Refresh the table preview
+                self._open_table(self.current_table)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to add row:\n{e}")
+
     def _add_column(self, name: str, col_type: str):
         if not self.current_table:
             QMessageBox.warning(self, "No Table", "Open a table first.")
@@ -309,8 +381,192 @@ class DatabaseExplorerWindow(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to alter column:\n{e}")
 
+    def _set_primary_key(self, column, enabled):
+        """Enable or disable primary key with validation against nullable columns."""
+        if enabled:
+            try:
+                # Check if the column is nullable before applying PK
+                col_info = self.controller.fetch_column_info(self.current_table, column)
+                if col_info and col_info.get("is_nullable", "").upper() == "YES":
+                    QMessageBox.warning(
+                        self,
+                        "Invalid Primary Key Operation",
+                        (
+                            f"The column '{column}' allows NULL values.\n\n"
+                            "⚠️ A PRIMARY KEY column must be defined as NOT NULL.\n"
+                            "Please alter the column to disallow NULLs before setting it as a primary key."
+                        ),
+                    )
+                    self.table_panel._revert_checkbox(column, 2, False)
+                    return
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    "Warning",
+                    f"Could not verify nullability for column '{column}':\n{e}\nProceeding anyway."
+                )
+
+        try:
+            self.controller.set_primary_key(self.current_table, column, enabled)
+            QMessageBox.information(
+                self,
+                "Success",
+                f"Primary key {'set' if enabled else 'removed'} on '{column}'."
+            )
+            self._open_table(self.current_table)
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to update primary key:\n{e}"
+            )
+            self.table_panel._revert_checkbox(column, 2, not enabled)
+
+    def _set_auto_increment(self, column, enabled):
+        """Enable or disable auto-increment (IDENTITY) on a column, with validation and confirmation."""
+        if enabled:
+            try:
+                # Check if column allows NULLs
+                col_info = self.controller.fetch_column_info(self.current_table, column)
+                if col_info and col_info.get("is_nullable", "").upper() == "YES":
+                    QMessageBox.warning(
+                        self,
+                        "Invalid Auto Increment Operation",
+                        (
+                            f"The column '{column}' allows NULL values.\n\n"
+                            "⚠️ Auto-increment (IDENTITY) columns must be defined as NOT NULL.\n"
+                            "Please alter the column to disallow NULLs before enabling auto increment."
+                        ),
+                    )
+                    self.table_panel._revert_checkbox(column, 3, False)
+                    return
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    "Warning",
+                    f"Could not verify nullability for column '{column}':\n{e}\nProceeding anyway."
+                )
+
+            # Standard warning about data loss
+            confirm = QMessageBox.warning(
+                self,
+                "⚠️ Data Loss Warning",
+                (
+                    "Enabling auto-increment on an existing column may require recreating it.\n\n"
+                    "⚠️ This process can potentially cause data loss or reset existing values.\n\n"
+                    "Do you want to continue?"
+                ),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if confirm == QMessageBox.No:
+                self.table_panel._revert_checkbox(column, 3, False)
+                return
+
+        try:
+            self.controller.set_auto_increment(self.current_table, column, enabled)
+            QMessageBox.information(
+                self,
+                "Success",
+                f"Auto increment {'enabled' if enabled else 'disabled'} on '{column}'."
+            )
+            self._open_table(self.current_table)
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to update auto increment:\n{e}"
+            )
+            self.table_panel._revert_checkbox(column, 3, not enabled)
+
+    def _set_nullable(self, column: str, is_nullable: bool):
+        """Enable/disable NULLs on a column with basic validation."""
+        if not self.current_table:
+            return
+
+        # If trying to make a column NULL-able, block if it is PK or IDENTITY
+        try:
+            col_info = self.controller.fetch_column_info(self.current_table, column) or {}
+        except Exception as e:
+            col_info = {}
+            # Non-fatal; continue with best-effort but warn.
+            QMessageBox.warning(
+                self,
+                "Warning",
+                f"Could not verify current attributes for '{column}':\n{e}\nProceeding anyway."
+            )
+
+        def _truthy(v):
+            s = str(v).strip().upper()
+            return s in ("1", "TRUE", "YES", "Y")
+
+        is_pk = _truthy(col_info.get("is_primary", col_info.get("primary_key", False)))
+        is_identity = _truthy(col_info.get("is_identity", col_info.get("auto_increment", False)))
+
+        # PK/IDENTITY columns must be NOT NULL
+        if is_nullable and (is_pk or is_identity):
+            QMessageBox.warning(
+                self,
+                "Invalid Operation",
+                (
+                    f"Column '{column}' is {'PRIMARY KEY' if is_pk else 'IDENTITY'}.\n\n"
+                    "Such columns must be defined as NOT NULL."
+                ),
+            )
+            # Revert the checkbox in the UI (nullable is column index 4)
+            self.table_panel._revert_checkbox(column, 4, False)
+            return
+
+        # Making a column NOT NULL can fail if existing rows contain NULLs
+        if not is_nullable:
+            confirm = QMessageBox.warning(
+                self,
+                "Set NOT NULL?",
+                (
+                    "Setting this column to NOT NULL will fail if any existing rows contain NULL values.\n\n"
+                    "Do you want to continue?"
+                ),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if confirm == QMessageBox.No:
+                # Revert back to nullable=True in UI
+                self.table_panel._revert_checkbox(column, 4, True)
+                return
+
+        try:
+            # Your controller should implement this; typical signature below:
+            # set_nullable(table_name, column_name, is_nullable: bool)
+            self.controller.set_nullable(self.current_table, column, is_nullable)
+            QMessageBox.information(
+                self,
+                "Success",
+                f"Column '{column}' is now {'NULL' if is_nullable else 'NOT NULL'}."
+            )
+            # Reload to refresh flags and constraints in the designer
+            self._open_table(self.current_table)
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to update nullability:\n{e}"
+            )
+            # Revert UI state back
+            self.table_panel._revert_checkbox(column, 4, not is_nullable)
+
+    def _update_cell_value(self, table, column, pk_value, new_value):
+        """Commit an edited cell back to the database."""
+        if not self.current_table or self.current_table != table:
+            return
+        try:
+            self.controller.update_table_cell(table, column, pk_value, new_value)
+            QMessageBox.information(self, "Success", f"Value updated in '{column}'.")
+            self._open_table(table)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to update value:\n{e}")
+
     def _add_table(self):
-        from gui.dialog import AddNewDialog
+        from gui.other_windows.dialog import AddNewDialog
         dialog = AddNewDialog(self, mode="table")
         if dialog.exec_() == dialog.Accepted:
             name, columns = dialog.get_table_definition()
@@ -325,7 +581,7 @@ class DatabaseExplorerWindow(QWidget):
                 QMessageBox.critical(self, "Error", f"Failed to create table:\n{e}")
 
     def _add_database(self):
-        from gui.dialog import AddNewDialog
+        from gui.other_windows.dialog import AddNewDialog
         dialog = AddNewDialog(self, mode="database")
         if dialog.exec_() == dialog.Accepted:
             db_name = dialog.get_database_name()
@@ -391,7 +647,7 @@ class DatabaseExplorerWindow(QWidget):
         export_paginated_data(self, fetch_query_with_pagination, "query_results", fetch_args=query, is_query=True)
     # ---------------- Common queries ----------------
     def _open_common_queries(self):
-        from gui.common_queries_window import CommonQueriesDialog
+        from gui.other_windows.common_queries_window import CommonQueriesDialog
         dialog = CommonQueriesDialog(parent=self)
         dialog.show()
 
@@ -435,7 +691,7 @@ class DatabaseExplorerWindow(QWidget):
                     pass
             else:
                 try:
-                    from gui.connection_window import ConnectionWindow
+                    from gui.connection_window.connection_window import ConnectionWindow
                     self.connection_window = ConnectionWindow()
                     self.connection_window.show()
                 except Exception:

@@ -10,6 +10,9 @@ class TableDesignerPanel(QWidget):
     addColumnRequested = pyqtSignal(str, str)      # name, type
     renameColumnRequested = pyqtSignal(str, str)   # old, new
     changeTypeRequested = pyqtSignal(str, str)     # column, new_type
+    primaryKeyToggled = pyqtSignal(str, bool)      # column, is_primary
+    autoIncrementToggled = pyqtSignal(str, bool)   # column, is_identity
+    nullableToggled = pyqtSignal(str, bool)  # column, is_nullable
 
     VALID_TYPES = ["INT", "VARCHAR(255)", "FLOAT", "DATE", "BIT"]
 
@@ -25,9 +28,13 @@ class TableDesignerPanel(QWidget):
 
         # Table
         self.column_table = QTableWidget()
-        self.column_table.setColumnCount(2)
-        self.column_table.setHorizontalHeaderLabels(["Column Name", "Data Type"])
-        self.column_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.column_table.setColumnCount(5)
+        self.column_table.setHorizontalHeaderLabels(["Column Name", "Data Type", "Primary Key", "Auto Increment", "Nullable"])
+        header = self.column_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)      # Column Name – fill extra space
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Data Type – adjust to text
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Primary Key – compact
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents) 
         self.column_table.itemChanged.connect(self._on_item_changed)
         layout.addWidget(self.column_table)
 
@@ -65,24 +72,58 @@ class TableDesignerPanel(QWidget):
         self.column_table.blockSignals(True)
         self.column_table.setRowCount(0)
 
-        for name, typ in self.current_schema:
+        for col in self.current_schema:
+            name, typ = col[0], col[1]
+            is_primary = col[2] if len(col) > 2 else False
+            is_identity = col[3] if len(col) > 3 else False
+
             r = self.column_table.rowCount()
             self.column_table.insertRow(r)
 
-            # editable name
+            # --- Column name cell ---
             name_item = QTableWidgetItem(name)
             name_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEditable | Qt.ItemIsEnabled)
+
+            if is_primary or is_identity:
+                name_item.setBackground(Qt.lightGray)
+
             self.column_table.setItem(r, 0, name_item)
 
-            # data type combobox
+            # --- Data type combobox ---
             combo = QComboBox()
             combo.addItems(self.VALID_TYPES)
             idx = combo.findText(typ.upper())
             combo.setCurrentIndex(idx if idx != -1 else 0)
             combo.currentTextChanged.connect(partial(self._on_type_changed, name))
+            if is_identity:
+                combo.setEnabled(False)
             self.column_table.setCellWidget(r, 1, combo)
 
-        # Add "Add column" row
+            # --- Primary key checkbox ---
+            pk_item = QTableWidgetItem()
+            pk_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            pk_item.setCheckState(Qt.Checked if is_primary else Qt.Unchecked)
+            self.column_table.setItem(r, 2, pk_item)
+
+            # --- Auto increment checkbox ---
+            id_item = QTableWidgetItem()
+            id_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            id_item.setCheckState(Qt.Checked if is_identity else Qt.Unchecked)
+            if not "INT" in typ.upper():
+                # Only allow auto-increment for numeric columns
+                id_item.setFlags(Qt.NoItemFlags)
+            self.column_table.setItem(r, 3, id_item)
+
+            # --- Nullable checkbox ---
+            nullable = col[4] if len(col) > 4 else True
+            null_item = QTableWidgetItem()
+            null_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            null_item.setCheckState(Qt.Checked if nullable else Qt.Unchecked)
+            if is_primary:
+                null_item.setFlags(Qt.NoItemFlags)
+            self.column_table.setItem(r, 4, null_item)
+
+        # --- Add "Add column" row ---
         r = self.column_table.rowCount()
         self.column_table.insertRow(r)
         add_item = QTableWidgetItem("Add column")
@@ -92,8 +133,10 @@ class TableDesignerPanel(QWidget):
         add_item.setFont(f)
         add_item.setForeground(Qt.gray)
         self.column_table.setItem(r, 0, add_item)
-        self.column_table.setItem(r, 1, QTableWidgetItem(""))
+        for i in range(1, 5):
+            self.column_table.setItem(r, i, QTableWidgetItem(""))
         self.column_table.blockSignals(False)
+
 
     def clear(self):
         self.current_schema = []
@@ -117,16 +160,45 @@ class TableDesignerPanel(QWidget):
 
     def _on_item_changed(self, item):
         row, col = item.row(), item.column()
-        if col != 0:
-            return
         if row >= len(self.current_schema):  # ignore "Add column"
             return
-        old_name = self.current_schema[row][0]
-        new_name = item.text().strip()
-        if not new_name or new_name == old_name:
-            return
-        self.renameColumnRequested.emit(old_name, new_name)
+
+        col_name = self.current_schema[row][0]
+
+        # Column name changed
+        if col == 0:
+            old_name = self.current_schema[row][0]
+            new_name = item.text().strip()
+            if new_name and new_name != old_name:
+                self.renameColumnRequested.emit(old_name, new_name)
+
+        # Primary key checkbox
+        elif col == 2:
+            is_pk = item.checkState() == Qt.Checked
+            self.primaryKeyToggled.emit(col_name, is_pk)
+
+        # Auto-increment checkbox
+        elif col == 3:
+            is_auto = item.checkState() == Qt.Checked
+            self.autoIncrementToggled.emit(col_name, is_auto)
+        
+        # Nullable checkbox
+        elif col == 4:  
+            is_nullable = item.checkState() == Qt.Checked
+            self.nullableToggled.emit(col_name, is_nullable)
 
     def _on_type_changed(self, column_name, new_type):
         """Emit type change with correct bound column."""
         self.changeTypeRequested.emit(column_name, new_type)
+
+    def _revert_checkbox(self, column_name, col_index, checked):
+        """Revert a checkbox state in the table safely."""
+        for row in range(self.column_table.rowCount()):
+            item = self.column_table.item(row, 0)
+            if item and item.text().replace("🔑 ", "") == column_name:
+                target = self.column_table.item(row, col_index)
+                if target:
+                    self.column_table.blockSignals(True)
+                    target.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+                    self.column_table.blockSignals(False)
+                break

@@ -10,13 +10,21 @@ class ConsoleEmitter(QObject):
 
 class EmittingStream:
     """Redirects stdout/stderr to a QTextEdit safely from any thread."""
-    def __init__(self, emitter: ConsoleEmitter):
+    def __init__(self, emitter: ConsoleEmitter, debug_enabled=True):
         self.emitter = emitter
+        self.debug_enabled = debug_enabled
+        self._buffer = ""
 
     def write(self, message):
-        if message.strip():
-            timestamp = datetime.datetime.now().strftime("%H:%M")
-            self.emitter.message_written.emit(f"{timestamp} : {message.strip()}")
+        message = message.strip()
+        if not message:
+            return
+
+        if message.startswith("[DEBUG]") and not self.debug_enabled:
+            return
+        
+        timestamp = datetime.datetime.now().strftime("%H:%M")
+        self.emitter.message_written.emit(f"{timestamp} : {message.strip()}")
 
     def flush(self):
         pass
@@ -32,7 +40,14 @@ class IntegratedConsole(QTextEdit):
     def append_message(self, message):
         self.append(message)
 
-def redirect_std(console_widget: IntegratedConsole):
+def redirect_std(console_widget: IntegratedConsole, debug_enabled=True):
     """Redirect print/standard output and errors to the given console widget safely."""
-    sys.stdout = EmittingStream(console_widget.emitter)
-    sys.stderr = EmittingStream(console_widget.emitter)
+    stdout_stream = EmittingStream(console_widget.emitter, debug_enabled=debug_enabled)
+    stderr_stream = EmittingStream(console_widget.emitter, debug_enabled=debug_enabled)
+    sys.stdout = stdout_stream
+    sys.stderr = stderr_stream
+
+    console_widget.stdout_stream = stdout_stream
+    console_widget.stderr_stream = stderr_stream
+
+    return stdout_stream, stderr_stream

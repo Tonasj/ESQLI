@@ -20,14 +20,41 @@ def use_database(connection, database_name):
     cursor.execute(f"USE [{database_name}]")
 
 def fetch_table_schema(connection, table_name):
-    """Return (column_name, data_type) for a given table."""
+    """
+    Return a list of (column_name, data_type, is_primary_key, is_identity, is_nullable)
+    for the given table (SQL Server compatible).
+    """
     cursor = connection.cursor()
     cursor.execute(f"""
-        SELECT COLUMN_NAME, DATA_TYPE
-        FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_NAME = '{table_name}'
-    """)
-    return cursor.fetchall()
+        SELECT 
+            c.COLUMN_NAME,
+            c.DATA_TYPE,
+            CASE WHEN kcu.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END AS is_primary,
+            COLUMNPROPERTY(OBJECT_ID(c.TABLE_SCHEMA + '.' + c.TABLE_NAME), c.COLUMN_NAME, 'IsIdentity') AS is_identity,
+            c.IS_NULLABLE
+        FROM INFORMATION_SCHEMA.COLUMNS c
+        LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+            ON c.TABLE_NAME = kcu.TABLE_NAME
+            AND c.COLUMN_NAME = kcu.COLUMN_NAME
+            AND kcu.CONSTRAINT_NAME IN (
+                SELECT CONSTRAINT_NAME
+                FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+                WHERE CONSTRAINT_TYPE = 'PRIMARY KEY'
+            )
+        WHERE c.TABLE_NAME = ?
+        ORDER BY c.ORDINAL_POSITION
+    """, (table_name,))
+
+    # Normalize and return as tuple list
+    result = []
+    for row in cursor.fetchall():
+        col_name = row.COLUMN_NAME
+        data_type = row.DATA_TYPE
+        is_primary = bool(row.is_primary)
+        is_identity = bool(row.is_identity)
+        is_nullable = (str(row.IS_NULLABLE).upper() == "YES")
+        result.append((col_name, data_type, is_primary, is_identity, is_nullable))
+    return result
 
 def fetch_table_preview(connection, table_name, limit=50):
     """Return up to `limit` rows and column names from a table."""
@@ -63,11 +90,75 @@ def create_database(connection, db_name):
     if previous_autocommit is not None:
         connection.autocommit = previous_autocommit
 
+def fetch_column_info(connection, table_name, column_name):
+    """Return column metadata: name, type, nullability, etc."""
+    cursor = connection.cursor()
+    cursor.execute(f"""
+        SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = ? AND COLUMN_NAME = ?
+    """, (table_name, column_name))
+    row = cursor.fetchone()
+    if row:
+        return {"name": row[0], "data_type": row[1], "is_nullable": row[2]}
+    return None
+
 def add_column(connection, table_name, column_name, column_type):
     """ALTER TABLE to add a new column."""
     cursor = connection.cursor()
     cursor.execute(f"ALTER TABLE [{table_name}] ADD [{column_name}] {column_type}")
     connection.commit()
+
+def insert_row(connection, table_name, values):
+    """
+    Insert a new row into the given table
+    `values` should be a dict of {column_name: value}.
+    """
+    cols = ", ".join(values.keys())
+    placeholders = ", ".join(["?" for _ in values])
+    cursor = connection.cursor()
+    cursor.execute(
+        f"INSERT INTO {table_name} ({cols}) VALUES ({placeholders})"
+    , list(values.values())
+    )
+    connection.commit()
+
+def update_table_cell(connection, table, column, pk_value, new_value):
+    """
+    Update a single cell identified by the table's primary key if present.
+    If no PK exists, fall back to updating by row number order.
+    """
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+        WHERE OBJECTPROPERTY(OBJECT_ID(CONSTRAINT_NAME), 'IsPrimaryKey') = 1
+          AND TABLE_NAME = ?
+    """, (table,))
+    pk_row = cursor.fetchone()
+
+    if pk_row:
+        pk_col = pk_row.COLUMN_NAME
+        sql = f"UPDATE [{table}] SET [{column}] = ? WHERE [{pk_col}] = ?"
+        cursor.execute(sql, (new_value, pk_value))
+    else:
+        # No PK: fall back to ROW_NUMBER()-based subquery update
+        sql = f"""
+            WITH Ordered AS (
+                SELECT *, ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS rn
+                FROM [{table}]
+            )
+            UPDATE Ordered
+            SET [{column}] = ?
+            WHERE rn = ?
+        """
+        # pk_value here is actually our row index (0-based in UI)
+        cursor.execute(sql, (new_value, int(pk_value) + 1))
+
+    connection.commit()
+
+
 
 def rename_column(connection, table_name, old_name, new_name):
     """Rename a column in a table using sp_rename."""
@@ -84,6 +175,150 @@ def alter_column_type(connection, table_name, column_name, new_type):
         f"ALTER TABLE [{table_name}] ALTER COLUMN [{column_name}] {new_type}"
     )
     connection.commit()
+
+def set_primary_key(connection, table, column, enabled):
+    cursor = connection.cursor()
+    if enabled:
+        # Ensure column is NOT NULL
+        cursor.execute(f"ALTER TABLE {table} ALTER COLUMN {column} INT NOT NULL;")
+        # Then add primary key constraint
+        cursor.execute(f"ALTER TABLE {table} ADD CONSTRAINT PK_{table}_{column} PRIMARY KEY ({column})")
+    else:
+        cursor.execute(f"ALTER TABLE {table} DROP CONSTRAINT PK_{table}_{column}")
+    connection.commit()
+
+def set_auto_increment(connection, table, column, enabled):
+    """
+    Enable or disable IDENTITY (auto-increment) for a column in SQL Server.
+
+    Because SQL Server doesn't support direct toggling of IDENTITY,
+    this recreates the column safely.
+    """
+    cursor = connection.cursor()
+    try: 
+        cursor.execute("BEGIN TRAN")
+        # Step 1: Get current column definition
+        cursor.execute(f"""
+            SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, COLUMN_DEFAULT, IS_NULLABLE
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = ? AND COLUMN_NAME = ?
+        """, (table, column))
+        col_info = cursor.fetchone()
+        if not col_info:
+            raise ValueError(f"Column '{column}' not found in table '{table}'")
+
+        col_name, data_type, char_len, default_val, is_nullable = col_info
+
+        # Ensure only INT/BIGINT can be IDENTITY
+        if "INT" not in data_type.upper():
+            raise ValueError(f"Auto-increment is only valid for INT columns (got {data_type})")
+
+        # Step 2: Check if column already is identity
+        cursor.execute(f"""
+            SELECT COLUMNPROPERTY(OBJECT_ID(?), ?, 'IsIdentity')
+        """, (table, column))
+        is_identity = cursor.fetchone()[0] == 1
+
+        if enabled and is_identity:
+            return  # nothing to do
+        if not enabled and not is_identity:
+            return  # nothing to do
+
+        # Step 3: Build temporary column
+        temp_col = f"{column}_temp"
+
+        # Step 4: Create a temporary column with or without IDENTITY
+        length_clause = f"({char_len})" if char_len and data_type.upper() in ("VARCHAR", "CHAR", "NVARCHAR") else ""
+        identity_clause = "IDENTITY(1,1)" if enabled else ""
+        null_clause = "NOT NULL"
+
+        cursor.execute(f"""
+            ALTER TABLE {table} ADD {temp_col} {data_type}{length_clause} {identity_clause} {null_clause}
+        """)
+
+        # Step 5: Copy existing data
+        # (We can't insert explicit identity values unless IDENTITY_INSERT is ON)
+        if not enabled:
+            # Copy values from the old identity column to the new plain one
+            cursor.execute(f"UPDATE {table} SET {temp_col} = {column}")
+        else:
+            # Recreating as identity: values will auto-generate
+            pass
+
+        # Step 6: Drop constraints and old column, then rename
+        cursor.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+        cursor.execute(f"EXEC sp_rename '{table}.{temp_col}', '{column}', 'COLUMN'")
+
+        connection.commit()
+    except Exception as e:
+        cursor.execute("ROLLBACK TRAN")
+        connection.rollback()
+        raise
+
+def set_nullable(connection, table, column, enabled):
+    """
+    Toggle a column's NULL / NOT NULL constraint for SQL Server safely.
+    Drops default constraints if necessary and reuses correct type metadata.
+    """
+    cursor = connection.cursor()
+    try:
+        # 1. Drop any default constraint bound to the column
+        cursor.execute(f"""
+            DECLARE @sql NVARCHAR(4000);
+            SELECT @sql = N'ALTER TABLE [' + OBJECT_NAME(parent_object_id) +
+                          '] DROP CONSTRAINT [' + name + ']'
+            FROM sys.default_constraints
+            WHERE parent_object_id = OBJECT_ID('{table}')
+              AND COL_NAME(parent_object_id, parent_column_id) = '{column}';
+            IF @sql IS NOT NULL EXEC sp_executesql @sql;
+        """)
+
+        # 2. Lookup full data type info
+        cursor.execute(f"""
+            SELECT DATA_TYPE,
+                   CHARACTER_MAXIMUM_LENGTH,
+                   NUMERIC_PRECISION,
+                   NUMERIC_SCALE,
+                   COLLATION_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = '{table}' AND COLUMN_NAME = '{column}';
+        """)
+        row = cursor.fetchone()
+        if not row:
+            raise Exception(f"Column {column} not found in table {table}.")
+
+        data_type, char_len, precision, scale, collation = row
+
+        if data_type.upper() in ("CHAR", "NCHAR", "VARCHAR", "NVARCHAR"):
+            type_decl = f"{data_type}({char_len if char_len != -1 else 'MAX'})"
+        elif data_type.upper() in ("DECIMAL", "NUMERIC"):
+            type_decl = f"{data_type}({precision},{scale})"
+        else:
+            type_decl = data_type
+
+        if collation and data_type.upper() in ("CHAR", "NCHAR", "VARCHAR", "NVARCHAR"):
+            type_decl += f" COLLATE {collation}"
+
+        null_clause = "NULL" if enabled else "NOT NULL"
+
+        # 3. Execute the ALTER with proper type definition
+        sql = f"ALTER TABLE [{table}] ALTER COLUMN [{column}] {type_decl} {null_clause};"
+        cursor.execute(sql)
+
+        # 4. Commit safely (force autocommit if needed)
+        try:
+            connection.commit()
+        except Exception:
+            if hasattr(connection, "autocommit"):
+                connection.autocommit = True
+                cursor.execute(sql)
+    except Exception as e:
+        connection.rollback()
+        raise
+    finally:
+        cursor.close()
+
+
 
 def fetch_full_table_paginated(connection, table_name, chunk_size=10000):
     """Generator that yields rows from a table in chunks."""

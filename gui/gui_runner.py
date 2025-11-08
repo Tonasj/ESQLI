@@ -4,9 +4,9 @@ from PyQt5.QtCore import QSettings
 import sys
 import os
 
-from .connection_window import ConnectionWindow
+from .connection_window.connection_window import ConnectionWindow
 from .database_explorer.main_window import DatabaseExplorerWindow
-from .engine_select import EngineSelectDialog
+from .other_windows.engine_select import EngineSelectDialog
 from core import load_sql_engine
 
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")

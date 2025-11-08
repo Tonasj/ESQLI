@@ -9,7 +9,7 @@ from PyQt5.QtCore import Qt, QThread
 
 from core import SQLConnectWorker
 from gui.database_explorer.main_window import DatabaseExplorerWindow
-from gui.window_utils import setup_app_settings, restore_window_settings, save_window_settings
+from gui.gui_helpers.window_utils import setup_app_settings, restore_window_settings, save_window_settings
 
 class ConnectionWindow(QWidget):
     def __init__(self, icon_path=None):
@@ -138,7 +138,6 @@ class ConnectionWindow(QWidget):
 
     def on_connection_success(self, connection):  
         self.db_connection = connection  
-        print("[DEBUG] Connected:", connection)  
         self.label.setText("Connected successfully!")  
         self.button.setEnabled(True)  
         self.host_input.setDisabled(False)  
@@ -153,6 +152,7 @@ class ConnectionWindow(QWidget):
 
     def open_database_explorer(self, db_name=None):
         """Open (or refresh) the Database Explorer window after connecting."""
+        print(f"[DEBUG] Connected:{self.db_connection}")
         try:
             if not hasattr(self, "open_explorers"):
                 self.open_explorers = []
