@@ -298,8 +298,9 @@ class DatabaseExplorerWindow(QWidget):
             schema = self.controller.fetch_table_schema(table_name)  # list[(name, type)]
             self.table_panel.load_schema(schema)
 
-            has_pk = any(col[2] for col in schema)  # col[2] is is_primary
-            self.data_panel.set_primary_key_info(has_pk, pk_index=0)
+            pk_index = next((i for i, col in enumerate(schema) if col[2]), None)
+            has_pk = pk_index is not None
+            self.data_panel.set_primary_key_info(has_pk, pk_index or 0)
 
             # Update query context
             tables = self.controller.fetch_tables()
@@ -554,14 +555,21 @@ class DatabaseExplorerWindow(QWidget):
             # Revert UI state back
             self.table_panel._revert_checkbox(column, 4, not is_nullable)
 
-    def _update_cell_value(self, table, column, pk_value, new_value):
-        """Commit an edited cell back to the database."""
-        if not self.current_table or self.current_table != table:
+    def _update_cell_value(self, table, column, pk_value, new_value, row_values, headers):
+        """Commit an edited cell back to the database and show result."""
+        if not getattr(self, "current_table", None) or self.current_table != table:
             return
+
         try:
-            self.controller.update_table_cell(table, column, pk_value, new_value)
-            QMessageBox.information(self, "Success", f"Value updated in '{column}'.")
-            self._open_table(table)
+            rows_updated = self.controller.update_table_cell(
+                table, column, pk_value, new_value, row_values, headers
+            )
+
+            if rows_updated and rows_updated > 0:
+                QMessageBox.information(self, "Success", f"Updated {rows_updated} row(s) in '{column}'.")
+                self._open_table(table)
+            else:
+                QMessageBox.warning(self, "No Changes", "No rows were updated. Check primary key or filters.")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to update value:\n{e}")
 

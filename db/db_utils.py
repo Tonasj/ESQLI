@@ -139,40 +139,72 @@ def insert_row(connection, table_name, values):
     cursor.execute(query, list(values.values()))
     connection.commit()
 
-def update_table_cell(connection, table, column, pk_value, new_value):
+def update_table_cell(connection, table, column, pk_value, new_value, row_values=None, headers=None):
     """
-    Update a single cell identified by the table's primary key if present.
-    If no PK exists, fall back to updating by row number order.
+    Update a cell in a table.
+    1. If a PK exists, update using it.
+    2. If no PK, find a single exact matching row based on all column values.
+       - If multiple matches, deny update.
+       - If exactly one match, update that row.
     """
     cursor = connection.cursor()
 
+    # Handle empty string as NULL for numeric/date columns
+    if new_value == "":
+        new_value = None
+
+    # Step 1: Try primary key update
     cursor.execute("""
         SELECT COLUMN_NAME
         FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
         WHERE OBJECTPROPERTY(OBJECT_ID(CONSTRAINT_NAME), 'IsPrimaryKey') = 1
-          AND TABLE_NAME = ?
+          AND LOWER(TABLE_NAME) = LOWER(?)
     """, (table,))
     pk_row = cursor.fetchone()
 
     if pk_row:
-        pk_col = pk_row.COLUMN_NAME
+        pk_col = pk_row[0]  # tuple-safe
         sql = f"UPDATE [{table}] SET [{column}] = ? WHERE [{pk_col}] = ?"
         cursor.execute(sql, (new_value, pk_value))
-    else:
-        # No PK: fall back to ROW_NUMBER()-based subquery update
-        sql = f"""
-            WITH Ordered AS (
-                SELECT *, ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS rn
-                FROM [{table}]
-            )
-            UPDATE Ordered
-            SET [{column}] = ?
-            WHERE rn = ?
-        """
-        # pk_value here is actually our row index (0-based in UI)
-        cursor.execute(sql, (new_value, int(pk_value) + 1))
+        connection.commit()
+        return cursor.rowcount
 
+    # Step 2: No PK — match row by full content
+    if not row_values or not headers:
+        raise ValueError("Full row data (row_values, headers) required for non-PK updates")
+
+    # Build WHERE clause from all columns except the one being updated
+    where_clauses = []
+    params = []
+    for col_name, val in zip(headers, row_values):
+        if col_name == column:
+            continue
+        if val is None or val == "":
+            where_clauses.append(f"[{col_name}] IS NULL")
+        else:
+            where_clauses.append(f"[{col_name}] = ?")
+            params.append(val)
+
+    where_sql = " AND ".join(where_clauses)
+    if not where_sql:
+        raise ValueError("Cannot construct WHERE clause for row identification")
+
+    # Ensure only one row matches
+    check_sql = f"SELECT COUNT(*) FROM [{table}] WHERE {where_sql}"
+    cursor.execute(check_sql, params)
+    match_count = cursor.fetchone()[0]
+
+    if match_count == 0:
+        raise ValueError("No matching row found — update canceled.")
+    elif match_count > 1:
+        raise ValueError("Multiple matching rows found — update canceled to avoid ambiguity.")
+
+    # Perform update on that exact row
+    update_sql = f"UPDATE [{table}] SET [{column}] = ? WHERE {where_sql}"
+    cursor.execute(update_sql, [new_value] + params)
     connection.commit()
+    return cursor.rowcount
+
 
 
 

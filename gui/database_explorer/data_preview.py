@@ -11,7 +11,8 @@ class DataPreviewPanel(QWidget):
     exportFullQueryRequested = pyqtSignal(str)            # full SQL text
     addTableItemRequested = pyqtSignal(str)               # add item to table
     pageChangeRequested = pyqtSignal(int, int)            # new_page, page_size
-    cellUpdateRequested = pyqtSignal(str, str, object, object)  # table, column, pk_or_row, new_value
+    cellUpdateRequested = pyqtSignal(str, str, object, 
+                                     object, list, list)  # table_name, column_name, pk_value, new_value, row_values, headers
 
     def __init__(self):
         super().__init__()
@@ -117,7 +118,10 @@ class DataPreviewPanel(QWidget):
         if not query_mode:
             table.itemChanged.connect(lambda item: self._on_cell_edited(item, label))
         else:
-            table.itemChanged.disconnect()
+            try:
+                table.itemChanged.disconnect()
+            except TypeError:
+                pass
 
         # --- Pagination (query mode only) ---
         if query_mode:
@@ -174,6 +178,10 @@ class DataPreviewPanel(QWidget):
                 return
 
             # Emit: table, column, pk_or_row, new value
-            self.cellUpdateRequested.emit(table_name, column_name, pk_value, new_value)
+            try:
+                self.cellUpdateRequested.emit(table_name, column_name, pk_value, new_value, list(self._rows[row]), list(self._headers))
+            except Exception as e:
+                print("Error editing cell:", e)
+
 
         QTimer.singleShot(0, confirm_and_emit)

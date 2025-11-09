@@ -5,10 +5,9 @@ class SQLConnectWorker(QObject):
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
 
-    def __init__(self, host, database, username, password, use_windows_auth=False):
+    def __init__(self, host, username, password, use_windows_auth=False):
         super().__init__()
         self.host = host
-        self.database = database
         self.username = username
         self.password = password
         self.use_windows_auth = use_windows_auth
@@ -18,7 +17,6 @@ class SQLConnectWorker(QObject):
             print("[DEBUG] SQLConnectWorker.run started")
             connection = connect_to_sql(
                 host=self.host,
-                database=self.database,
                 username=self.username,
                 password=self.password,
                 use_windows_auth=self.use_windows_auth

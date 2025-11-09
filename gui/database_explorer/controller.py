@@ -13,10 +13,8 @@ class DBController:
                 raw = getattr(self.conn, "connection", None)
                 if raw is not None and hasattr(raw, "autocommit"):
                     raw.autocommit = True
-            print("[INFO] Autocommit enabled for DB connection.")
         except Exception as e:
             print(f"[WARN] Could not enable autocommit: {e}")
-        print(f"[DEBUG] Autocommit status: {getattr(self.conn, 'autocommit', 'n/a')}")
 
     # -------- DB listing / selection --------
     def fetch_databases(self):
@@ -69,10 +67,9 @@ class DBController:
         from db.db_utils import fetch_column_info
         return fetch_column_info(self.conn, table_name, column_name)
 
-    def update_table_cell(self, table, column, row_index, new_value):
+    def update_table_cell(self, table, column, pk_value, new_value, row_values=None, headers=None):
         from db.db_utils import update_table_cell
-        return update_table_cell(self.conn, table, column, row_index, new_value)
-
+        return update_table_cell(self.conn, table, column, pk_value, new_value, row_values, headers)
 
     # -------- DDL --------
     def create_table(self, name, columns):
