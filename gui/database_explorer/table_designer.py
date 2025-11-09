@@ -92,9 +92,13 @@ class TableDesignerPanel(QWidget):
             # --- Data type combobox ---
             combo = QComboBox()
             combo.addItems(self.VALID_TYPES)
-            idx = combo.findText(typ.upper())
+            t = typ.upper()
+            if "CHAR" in t:
+                t = "VARCHAR(255)"   # normalize
+            idx = combo.findText(t)
             combo.setCurrentIndex(idx if idx != -1 else 0)
-            combo.currentTextChanged.connect(partial(self._on_type_changed, name))
+            combo.setCurrentIndex(idx if idx != -1 else 0)
+            combo.currentTextChanged.connect(partial(self._on_type_changed, r))
             if is_identity:
                 combo.setEnabled(False)
             self.column_table.setCellWidget(r, 1, combo)
@@ -187,9 +191,11 @@ class TableDesignerPanel(QWidget):
             is_nullable = item.checkState() == Qt.Checked
             self.nullableToggled.emit(col_name, is_nullable)
 
-    def _on_type_changed(self, column_name, new_type):
-        """Emit type change with correct bound column."""
-        self.changeTypeRequested.emit(column_name, new_type)
+    def _on_type_changed(self, row, new_type):
+        """Emit type change for the correct column based on row index."""
+        if row < len(self.current_schema):
+            column_name = self.current_schema[row][0]
+            self.changeTypeRequested.emit(column_name, new_type.upper())
 
     def _revert_checkbox(self, column_name, col_index, checked):
         """Revert a checkbox state in the table safely."""

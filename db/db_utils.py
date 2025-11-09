@@ -65,12 +65,33 @@ def fetch_table_preview(connection, table_name, limit=50):
     return columns, rows
 
 def create_table(connection, table_name, columns):
-    """Create a table with the given name and [(col, type)] definition."""
-    col_defs = ", ".join([f"[{n}] {t}" for n, t in columns])
-    query = f"CREATE TABLE [{table_name}] ({col_defs})"
+    """
+    Create a table with columns defined as:
+    [(name, type, is_primary, is_identity, is_nullable)]
+    """
+    col_defs = []
+    pk_col = None
+
+    for name, col_type, is_primary, is_identity, is_nullable in columns:
+        parts = [f"[{name}] {col_type}"]
+
+        if is_identity:
+            parts.append("IDENTITY(1,1)")
+        if not is_nullable or is_primary:
+            parts.append("NOT NULL")
+        if is_primary:
+            pk_col = name
+
+        col_defs.append(" ".join(parts))
+
+    if pk_col:
+        col_defs.append(f"PRIMARY KEY ([{pk_col}])")
+
+    query = f"CREATE TABLE [{table_name}] ({', '.join(col_defs)})"
     cursor = connection.cursor()
     cursor.execute(query)
     connection.commit()
+
 
 def create_database(connection, db_name):
     """Create a new database and ensure autocommit where required."""
@@ -110,17 +131,12 @@ def add_column(connection, table_name, column_name, column_type):
     connection.commit()
 
 def insert_row(connection, table_name, values):
-    """
-    Insert a new row into the given table
-    `values` should be a dict of {column_name: value}.
-    """
-    cols = ", ".join(values.keys())
+    """Insert a new row into the given table."""
+    escaped_cols = ", ".join(f"[{c}]" for c in values.keys())
     placeholders = ", ".join(["?" for _ in values])
     cursor = connection.cursor()
-    cursor.execute(
-        f"INSERT INTO {table_name} ({cols}) VALUES ({placeholders})"
-    , list(values.values())
-    )
+    query = f"INSERT INTO [{table_name}] ({escaped_cols}) VALUES ({placeholders})"
+    cursor.execute(query, list(values.values()))
     connection.commit()
 
 def update_table_cell(connection, table, column, pk_value, new_value):
@@ -164,7 +180,7 @@ def rename_column(connection, table_name, old_name, new_name):
     """Rename a column in a table using sp_rename."""
     cursor = connection.cursor()
     cursor.execute(
-        f"EXEC sp_rename '{table_name}.{old_name}', '{new_name}', 'COLUMN'"
+        f"EXEC sp_rename '[{table_name}].[{old_name}]', '{new_name}', 'COLUMN'"
     )
     connection.commit()
 
@@ -180,11 +196,11 @@ def set_primary_key(connection, table, column, enabled):
     cursor = connection.cursor()
     if enabled:
         # Ensure column is NOT NULL
-        cursor.execute(f"ALTER TABLE {table} ALTER COLUMN {column} INT NOT NULL;")
+        cursor.execute(f"ALTER TABLE [{table}] ALTER COLUMN [{column}] INT NOT NULL;")
         # Then add primary key constraint
-        cursor.execute(f"ALTER TABLE {table} ADD CONSTRAINT PK_{table}_{column} PRIMARY KEY ({column})")
+        cursor.execute(f"ALTER TABLE [{table}] ADD CONSTRAINT [PK_{table}_{column}] PRIMARY KEY ([{column}])")
     else:
-        cursor.execute(f"ALTER TABLE {table} DROP CONSTRAINT PK_{table}_{column}")
+        cursor.execute(f"ALTER TABLE [{table}] DROP CONSTRAINT [PK_{table}_{column}]")
     connection.commit()
 
 def set_auto_increment(connection, table, column, enabled):
@@ -233,21 +249,21 @@ def set_auto_increment(connection, table, column, enabled):
         null_clause = "NOT NULL"
 
         cursor.execute(f"""
-            ALTER TABLE {table} ADD {temp_col} {data_type}{length_clause} {identity_clause} {null_clause}
+            ALTER TABLE [{table}] ADD [{temp_col}] {data_type}{length_clause} {identity_clause} {null_clause}
         """)
 
         # Step 5: Copy existing data
         # (We can't insert explicit identity values unless IDENTITY_INSERT is ON)
         if not enabled:
             # Copy values from the old identity column to the new plain one
-            cursor.execute(f"UPDATE {table} SET {temp_col} = {column}")
+            cursor.execute(f"UPDATE [{table}] SET [{temp_col}] = [{column}]")
         else:
             # Recreating as identity: values will auto-generate
             pass
 
         # Step 6: Drop constraints and old column, then rename
-        cursor.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
-        cursor.execute(f"EXEC sp_rename '{table}.{temp_col}', '{column}', 'COLUMN'")
+        cursor.execute(f"ALTER TABLE [{table}] DROP COLUMN [{column}]")
+        cursor.execute(f"EXEC sp_rename '[{table}].[{temp_col}]', '{column}', 'COLUMN'")
 
         connection.commit()
     except Exception as e:
@@ -268,7 +284,7 @@ def set_nullable(connection, table, column, enabled):
             SELECT @sql = N'ALTER TABLE [' + OBJECT_NAME(parent_object_id) +
                           '] DROP CONSTRAINT [' + name + ']'
             FROM sys.default_constraints
-            WHERE parent_object_id = OBJECT_ID('{table}')
+            WHERE parent_object_id = OBJECT_ID('[{table}]')
               AND COL_NAME(parent_object_id, parent_column_id) = '{column}';
             IF @sql IS NOT NULL EXEC sp_executesql @sql;
         """)
