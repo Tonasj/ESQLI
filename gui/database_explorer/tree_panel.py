@@ -1,5 +1,8 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem, QPushButton, QHeaderView
-from PyQt5.QtCore import pyqtSignal, Qt
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
+    QPushButton, QHeaderView, QMenu, QAction
+)
+from PyQt5.QtCore import pyqtSignal, Qt, QPoint
 
 
 class DatabaseTreePanel(QWidget):
@@ -7,6 +10,8 @@ class DatabaseTreePanel(QWidget):
     tableSelected = pyqtSignal(str)
     requestAddDatabase = pyqtSignal()
     requestAddTable = pyqtSignal()
+    importTableRequested = pyqtSignal(str)
+    exportTableRequested = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -18,9 +23,12 @@ class DatabaseTreePanel(QWidget):
 
         self.tree.itemDoubleClicked.connect(self._on_double)
 
+        # --- Enable custom right-click context menu ---
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._on_context_menu)
+
     # ------- Public API -------
     def show_databases(self, databases):
-        """Show list of databases with a 🔗 connect button beside each."""
         self.tree.clear()
         self.tree.setHeaderLabels(["Databases", "Action"])
 
@@ -29,7 +37,6 @@ class DatabaseTreePanel(QWidget):
         header.setSectionResizeMode(1, QHeaderView.Fixed)
         header.resizeSection(1, 40)
 
-        # “Add new database …” entry
         add_db_item = QTreeWidgetItem(["➕ Add new database..."])
         add_db_item.setData(0, Qt.UserRole, "add_new_database")
         f = add_db_item.font(0)
@@ -37,7 +44,6 @@ class DatabaseTreePanel(QWidget):
         add_db_item.setFont(0, f)
         self.tree.addTopLevelItem(add_db_item)
 
-        # Regular database entries with buttons
         for name in databases:
             item = QTreeWidgetItem([name])
             item.setData(0, Qt.UserRole, "database")
@@ -52,7 +58,6 @@ class DatabaseTreePanel(QWidget):
         self.tree.expandAll()
 
     def show_database_objects(self, tables):
-        """Show objects (tables, views, procedures) of a selected database."""
         self.tree.clear()
         self.tree.setHeaderLabels(["Database Objects"])
 
@@ -76,7 +81,6 @@ class DatabaseTreePanel(QWidget):
 
     # ------- Internals -------
     def _on_double(self, item, column):
-        """Handle double-click only for 'add new …' and table items."""
         t = item.data(0, Qt.UserRole)
         name = item.text(0)
 
@@ -86,3 +90,26 @@ class DatabaseTreePanel(QWidget):
             self.requestAddTable.emit()
         elif t == "table":
             self.tableSelected.emit(name)
+
+    def _on_context_menu(self, pos: QPoint):
+        """Right-click context menu handler"""
+        item = self.tree.itemAt(pos)
+        if not item:
+            return
+
+        item_type = item.data(0, Qt.UserRole)
+        item_name = item.text(0)
+
+        # Only show menu for table items
+        if item_type == "table":
+            menu = QMenu(self)
+
+            import_action = QAction("📥 Import table data", self)
+            export_action = QAction("📤 Export table data", self)
+
+            import_action.triggered.connect(lambda: self.importTableRequested.emit(item_name))
+            export_action.triggered.connect(lambda: self.exportTableRequested.emit(item_name))
+
+            menu.addAction(import_action)
+            menu.addAction(export_action)
+            menu.exec_(self.tree.viewport().mapToGlobal(pos))

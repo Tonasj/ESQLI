@@ -188,6 +188,8 @@ class DatabaseExplorerWindow(QWidget):
         self.tree_panel.tableSelected.connect(self._open_table)
         self.tree_panel.requestAddDatabase.connect(self._add_database)
         self.tree_panel.requestAddTable.connect(self._add_table)
+        self.tree_panel.exportTableRequested.connect(self._export_full_table)
+        self.tree_panel.importTableRequested.connect(self._import_data_to_table)
 
         self.table_panel.addColumnRequested.connect(self._add_column)
         self.table_panel.renameColumnRequested.connect(self._rename_column)
@@ -609,21 +611,48 @@ class DatabaseExplorerWindow(QWidget):
             self.query_panel.show_message("⚠️ Please enter a SQL query to run.", kind="warn")
             return
         try:
-            columns, rows = self.controller.fetch_query_with_pagination(query, page, page_size)
+            result = self.controller.fetch_query_with_pagination(query, page, page_size)
+            if len(result) == 3:
+                columns, rows, stats = result
+            else:
+                columns, rows = result
+                stats = {"success": 1, "failed": 0, "total": 1}
+
             self.last_executed_query = query
             self.last_query_results = (columns, rows, query, page, page_size)
 
-            if columns:
+            stats_msg = (
+                f"Statements executed: {stats['total']} "
+                f"(✅ {stats['success']} succeeded, ❌ {stats['failed']} failed)"
+            )
+
+            if columns and len(rows) > 0:
+                # Has a SELECT result set
                 self.data_panel.show_query_results(columns, rows, page, page_size, query)
                 self.query_panel.show_message(
-                    f"✅ Showing rows {page*page_size+1}–{page*page_size+len(rows)} (page {page+1})",
+                    f"✅ Showing rows {page*page_size+1}–{page*page_size+len(rows)} (page {page+1})\n{stats_msg}",
                     kind="ok",
                 )
             else:
+                # No result rows — likely DDL or multi-statement batch
                 self.data_panel.clear()
-                self.query_panel.show_message("✅ Query executed successfully (no result to show).", kind="ok")
+
+                if stats["failed"] > 0:
+                    msg = f"⚠️ Some statements failed.\n{stats_msg}"
+                    kind = "warn"
+                else:
+                    msg = f"✅ Query executed successfully (no result to show).\n{stats_msg}"
+                    kind = "ok"
+
+                self.query_panel.show_message(msg, kind=kind)
+
+                # Refresh DB structure (useful after DDL)
+                tables = self.controller.fetch_tables()
+                self.tree_panel.show_database_objects(tables)
+
         except Exception as e:
             self.query_panel.show_message(f"❌ Failed to execute query: {e}", kind="err")
+
 
     def _change_query_page(self, new_page: int, page_size: int):
         if not self.last_query_results:
@@ -653,6 +682,14 @@ class DatabaseExplorerWindow(QWidget):
             return
 
         export_paginated_data(self, fetch_query_with_pagination, "query_results", fetch_args=query, is_query=True)
+
+    # ---------------- Import actions ----------------
+    def _import_data_to_table(self, table_name):
+        from core.import_utils import import_data_to_table
+        inserted = import_data_to_table(self, self.controller, table_name)
+        if inserted:
+            self._open_table(table_name)
+
     # ---------------- Common queries ----------------
     def _open_common_queries(self):
         from gui.other_windows.common_queries_window import CommonQueriesDialog

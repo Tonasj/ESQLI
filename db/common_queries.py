@@ -11,90 +11,90 @@ COMMON_SQL_QUERIES = [
 
     ("[TITLE] Table Management", ""),
     ("Create Table", 
-     "CREATE TABLE [TableName] (\n"
+     "CREATE TABLE [dbo].[TableName] (\n"
      "    ID INT IDENTITY(1,1) PRIMARY KEY,\n"
      "    Column1 VARCHAR(255),\n"
      "    Column2 INT,\n"
      "    CreatedAt DATETIME DEFAULT GETDATE()\n"
      ");"),
 
-    ("Rename Table", "EXEC sp_rename 'OldTableName', 'NewTableName';"),
-    ("Drop Table", "DROP TABLE [TableName];"),
-    ("Truncate Table", "TRUNCATE TABLE [TableName];"),
-    ("Copy Table Structure", "SELECT TOP 0 * INTO [NewTable] FROM [ExistingTable];"),
-    ("Copy Table with Data", "SELECT * INTO [NewTable] FROM [ExistingTable];"),
+    ("Rename Table", "EXEC sp_rename '[dbo].[OldTableName]', 'NewTableName';"),
+    ("Drop Table", "DROP TABLE [dbo].[TableName];"),
+    ("Truncate Table", "TRUNCATE TABLE [dbo].[TableName];"),
+    ("Copy Table Structure", "SELECT TOP 0 * INTO [dbo].[NewTable] FROM [dbo].[ExistingTable];"),
+    ("Copy Table with Data", "SELECT * INTO [dbo].[NewTable] FROM [dbo].[ExistingTable];"),
 
     ("[TITLE] Alter Table", ""),
-    ("Add Column", "ALTER TABLE [TableName] ADD [NewColumn] NVARCHAR(255);"),
-    ("Drop Column", "ALTER TABLE [TableName] DROP COLUMN [ColumnName];"),
-    ("Rename Column", "EXEC sp_rename '[TableName].[OldColumnName]', 'NewColumnName', 'COLUMN';"),
-    ("Change Column Type", "ALTER TABLE [TableName] ALTER COLUMN [ColumnName] INT;"),
-    ("Add Primary Key", "ALTER TABLE [TableName] ADD CONSTRAINT PK_[TableName] PRIMARY KEY ([ColumnName]);"),
+    ("Add Column", "ALTER TABLE [dbo].[TableName] ADD [NewColumn] NVARCHAR(255);"),
+    ("Drop Column", "ALTER TABLE [dbo].[TableName] DROP COLUMN [ColumnName];"),
+    ("Rename Column", "EXEC sp_rename '[dbo].[TableName].[OldColumnName]', 'NewColumnName', 'COLUMN';"),
+    ("Change Column Type", "ALTER TABLE [dbo].[TableName] ALTER COLUMN [ColumnName] INT;"),
+    ("Add Primary Key", "ALTER TABLE [dbo].[TableName] ADD CONSTRAINT PK_[TableName] PRIMARY KEY ([ColumnName]);"),
     ("Add Foreign Key", 
-     "ALTER TABLE [ChildTable] ADD CONSTRAINT FK_[ChildTable]_[ParentTable]\n"
-     "FOREIGN KEY ([ParentID]) REFERENCES [ParentTable]([ID]);"),
+     "ALTER TABLE [dbo].[ChildTable] ADD CONSTRAINT FK_[ChildTable]_[ParentTable]\n"
+     "FOREIGN KEY ([ParentID]) REFERENCES [dbo].[ParentTable]([ID]);"),
 
     ("[TITLE] Data Manipulation", ""),
     ("Insert Data", 
-     "INSERT INTO [TableName] (Column1, Column2) VALUES ('Value1', 'Value2');"),
+     "INSERT INTO [dbo].[TableName] (Column1, Column2) VALUES ('Value1', 'Value2');"),
     ("Select Data", 
-     "SELECT * FROM [TableName];"),
+     "SELECT * FROM [dbo].[TableName];"),
     ("Select with Condition", 
-     "SELECT Column1, Column2 FROM [TableName] WHERE Column1 = 'Value';"),
+     "SELECT Column1, Column2 FROM [dbo].[TableName] WHERE Column1 = 'Value';"),
     ("Update Data", 
-     "UPDATE [TableName] SET Column1 = 'NewValue' WHERE ID = 1;"),
+     "UPDATE [dbo].[TableName] SET Column1 = 'NewValue' WHERE ID = 1;"),
     ("Delete Data", 
-     "DELETE FROM [TableName] WHERE ID = 1;"),
+     "DELETE FROM [dbo].[TableName] WHERE ID = 1;"),
     ("Count Rows", 
-     "SELECT COUNT(*) FROM [TableName];"),
+     "SELECT COUNT(*) FROM [dbo].[TableName];"),
     ("Order By", 
-     "SELECT * FROM [TableName] ORDER BY Column1 DESC;"),
+     "SELECT * FROM [dbo].[TableName] ORDER BY Column1 DESC;"),
     ("Group By", 
-     "SELECT Column1, COUNT(*) AS Total FROM [TableName] GROUP BY Column1;"),
+     "SELECT Column1, COUNT(*) AS Total FROM [dbo].[TableName] GROUP BY Column1;"),
 
     ("[TITLE] Joins & Relationships", ""),
     ("Inner Join", 
-     "SELECT a.*, b.* FROM [TableA] a\n"
-     "INNER JOIN [TableB] b ON a.ID = b.A_ID;"),
+     "SELECT a.*, b.* FROM [dbo].[TableA] a\n"
+     "INNER JOIN [dbo].[TableB] b ON a.ID = b.A_ID;"),
     ("Left Join", 
-     "SELECT a.*, b.* FROM [TableA] a\n"
-     "LEFT JOIN [TableB] b ON a.ID = b.A_ID;"),
+     "SELECT a.*, b.* FROM [dbo].[TableA] a\n"
+     "LEFT JOIN [dbo].[TableB] b ON a.ID = b.A_ID;"),
     ("Right Join", 
-     "SELECT a.*, b.* FROM [TableA] a\n"
-     "RIGHT JOIN [TableB] b ON a.ID = b.A_ID;"),
+     "SELECT a.*, b.* FROM [dbo].[TableA] a\n"
+     "RIGHT JOIN [dbo].[TableB] b ON a.ID = b.A_ID;"),
     ("Full Join", 
-     "SELECT a.*, b.* FROM [TableA] a\n"
-     "FULL OUTER JOIN [TableB] b ON a.ID = b.A_ID;"),
+     "SELECT a.*, b.* FROM [dbo].[TableA] a\n"
+     "FULL OUTER JOIN [dbo].[TableB] b ON a.ID = b.A_ID;"),
 
     ("[TITLE] Indexes", ""),
     ("Create Index", 
-     "CREATE INDEX IX_[TableName]_[ColumnName] ON [TableName]([ColumnName]);"),
+     "CREATE INDEX IX_[TableName]_[ColumnName] ON [dbo].[TableName]([ColumnName]);"),
     ("Drop Index", 
-     "DROP INDEX IX_[TableName]_[ColumnName] ON [TableName];"),
+     "DROP INDEX IX_[TableName]_[ColumnName] ON [dbo].[TableName];"),
     ("List Indexes", 
-     "EXEC sp_helpindex '[TableName]';"),
+     "EXEC sp_helpindex '[dbo].[TableName]';"),
 
     ("[TITLE] Views", ""),
     ("Create View", 
-     "CREATE VIEW [ViewName] AS\n"
-     "SELECT Column1, Column2 FROM [TableName] WHERE Condition;"),
+     "CREATE VIEW [dbo].[ViewName] AS\n"
+     "SELECT Column1, Column2 FROM [dbo].[TableName] WHERE Condition;"),
     ("Drop View", 
-     "DROP VIEW [ViewName];"),
+     "DROP VIEW [dbo].[ViewName];"),
 
     ("[TITLE] Stored Procedures", ""),
     ("Create Stored Procedure",
-     "CREATE PROCEDURE [ProcedureName]\n"
+     "CREATE PROCEDURE [dbo].[ProcedureName]\n"
      "AS\n"
      "BEGIN\n"
-     "    SELECT * FROM [TableName];\n"
+     "    SELECT * FROM [dbo].[TableName];\n"
      "END;"),
-    ("Execute Stored Procedure", "EXEC [ProcedureName];"),
-    ("Drop Stored Procedure", "DROP PROCEDURE [ProcedureName];"),
+    ("Execute Stored Procedure", "EXEC [dbo].[ProcedureName];"),
+    ("Drop Stored Procedure", "DROP PROCEDURE [dbo].[ProcedureName];"),
 
     ("[TITLE] Utilities", ""),
-    ("Show Table Schema", "EXEC sp_columns [TableName];"),
-    ("Show All Tables", "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES;"),
+    ("Show Table Schema", "EXEC sp_columns '[dbo].[TableName]';"),
+    ("Show All Tables", "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'dbo';"),
     ("Show All Columns", 
      "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS\n"
-     "WHERE TABLE_NAME = 'TableName';"),
+     "WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'TableName';"),
 ]

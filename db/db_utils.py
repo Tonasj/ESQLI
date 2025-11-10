@@ -205,6 +205,105 @@ def update_table_cell(connection, table, column, pk_value, new_value, row_values
     connection.commit()
     return cursor.rowcount
 
+def bulk_insert(connection, table_name, df, chunk_size=1000, parent=None):
+    """
+    Insert many rows into a table efficiently using pyodbc.
+    Detects invalid type conversions (e.g., string in numeric column) and reports clearly.
+    """
+    import math
+    import pandas as pd
+    import numpy as np
+    from PyQt5.QtWidgets import QMessageBox
+
+    if df is None or df.empty:
+        return 0
+
+    cursor = connection.cursor()
+    try:
+        # 1️⃣ Get metadata (column names and SQL types)
+        cursor.execute(f"SELECT TOP 0 * FROM [{table_name}]")
+        desc = cursor.description
+        col_meta = {
+            d[0]: {
+                "type_code": d[1],
+                "maxlen": d[3] or d[4] or None,
+            }
+            for d in desc
+        }
+
+        # 2️⃣ Validate and sanitize values
+        for col in df.columns:
+            meta = col_meta.get(col, {})
+            sql_type = meta.get("type_code")
+            maxlen = meta.get("maxlen")
+
+            # --- Trim long strings for varchar/nvarchar ---
+            if maxlen and maxlen > 0 and df[col].dtype == object:
+                df[col] = df[col].astype(str).apply(
+                    lambda v: v[:maxlen] if isinstance(v, str) and len(v) > maxlen else v
+                )
+
+            # --- Detect numeric columns ---
+            # SQL numeric type_codes vary by driver: 4=INT, 3=DECIMAL, 5=FLOAT, -5=BIGINT, etc.
+            numeric_codes = {2, 3, 4, 5, 6, 7, -5, -6}
+            if sql_type in numeric_codes:
+                bad_rows = []
+                for idx, v in enumerate(df[col]):
+                    if v in (None, "", np.nan):
+                        continue
+                    try:
+                        float(v)
+                    except Exception:
+                        bad_rows.append((idx + 1, v))
+
+                if bad_rows:
+                    examples = ", ".join(f"'{val}' (row {i})" for i, val in bad_rows[:3])
+                    msg = (
+                        f"❌ Column '{col}' expects numeric data.\n\n"
+                        f"Found invalid values: {examples}"
+                        + (f"\n… and {len(bad_rows) - 3} more." if len(bad_rows) > 3 else "")
+                    )
+                    if parent:
+                        QMessageBox.critical(parent, "Invalid Data Type", msg)
+                    raise ValueError(msg)
+
+        # 3️⃣ Prepare insert query
+        columns = ", ".join(f"[{col}]" for col in df.columns)
+        placeholders = ", ".join(["?"] * len(df.columns))
+        query = f"INSERT INTO [{table_name}] ({columns}) VALUES ({placeholders})"
+
+        values = [
+            tuple(None if pd.isna(v) else v for v in row)
+            for row in df.to_numpy()
+        ]
+        total = len(values)
+        num_chunks = math.ceil(total / chunk_size)
+
+        # 4️⃣ Execute in chunks
+        for i in range(num_chunks):
+            chunk = values[i * chunk_size:(i + 1) * chunk_size]
+            cursor.fast_executemany = True
+            cursor.executemany(query, chunk)
+
+        connection.commit()
+        return total
+
+    except Exception as e:
+        if connection:
+            try:
+                connection.rollback()
+            except Exception:
+                pass
+        # If we already raised a clear message earlier, keep it as-is
+        raise
+
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+
 
 
 
@@ -393,61 +492,75 @@ def fetch_full_table_paginated(connection, table_name, chunk_size=10000):
         yield columns, rows
         offset += len(rows)
 
+import pandas as pd
+import re
+
 def fetch_query_with_pagination(connection, query, page=0, page_size=500):
     """
-    Execute a SQL query with proper pagination.
-    Applies OFFSET/FETCH to the final SELECT statement only.
-    Compatible with SQL Server, and ignores USE/COMMENT lines.
+    Execute any SQL query (including multi-statement batches).
+    SELECT queries are paginated; non-SELECT queries execute directly.
+    Returns (columns, rows, stats) where stats is a dict with counts.
     """
-    cursor = connection.cursor()
-    query = query.strip()
+    import re
+    import pandas as pd
 
-    # Normalize spacing and strip trailing semicolons/newlines
-    query = re.sub(r'\s+', ' ', query).strip().rstrip(';')
+    if not query or not query.strip():
+        return [], [], {"success": 0, "failed": 0, "total": 0}
 
-    # Find last SELECT statement (ignoring comments and USE)
-    select_match = re.search(r'(select\b.*)$', query, flags=re.IGNORECASE)
-    if not select_match:
-        print("[DEBUG] No SELECT statement found; executing raw query.")
-        cursor.execute(query)
-        rows = cursor.fetchall() if cursor.description else []
-        columns = [desc[0] for desc in cursor.description] if cursor.description else []
-        connection.commit()
-        return columns, rows
+    query = query.strip().strip(';').strip('"').strip("'")
 
-    # Split into "before SELECT" and "SELECT part"
-    before_select = query[:select_match.start()].strip()
-    select_stmt = select_match.group(1).strip()
+    # Split into SQL statements
+    statements = [s.strip() for s in re.split(r';\s*(?:\r?\n)+', query) if s.strip()]
 
-    # Add ORDER BY if missing
-    if re.search(r'\border\s+by\b', select_stmt, flags=re.IGNORECASE):
-        paginated_select = (
-            f"{select_stmt} OFFSET {page * page_size} ROWS FETCH NEXT {page_size} ROWS ONLY"
-        )
-    else:
-        paginated_select = (
-            f"{select_stmt} ORDER BY (SELECT NULL) OFFSET {page * page_size} ROWS FETCH NEXT {page_size} ROWS ONLY"
-        )
+    all_columns, all_rows = [], []
+    success_count, fail_count = 0, 0
 
-    # Combine back into one runnable SQL batch
-    final_query = before_select + "\n" + paginated_select if before_select else paginated_select
+    for stmt in statements:
+        # Skip empty/comment-only statements
+        if not re.search(r'\w', stmt):
+            continue
 
-    print(f"[DEBUG] Running paginated SQL:\n{final_query}\n")
+        # Detect SELECT (ignoring comments)
+        is_select = bool(re.match(r'^\s*(?:--[^\n]*\n\s*)*select\b', stmt, flags=re.IGNORECASE))
 
-    cursor.execute(final_query)
+        if is_select:
+            if not re.search(r'\border\s+by\b', stmt, flags=re.IGNORECASE):
+                stmt += " ORDER BY (SELECT NULL)"
+            paginated = f"{stmt} OFFSET {page * page_size} ROWS FETCH NEXT {page_size} ROWS ONLY"
+            print(f"[DEBUG] Running SELECT via pandas:\n{paginated}\n")
 
-    columns, rows = [], []
-    # Handle multi-result sets
-    while True:
-        if cursor.description:
-            columns = [desc[0] for desc in cursor.description]
-            rows = cursor.fetchall()
-            break
-        if not cursor.nextset():
-            break
+            try:
+                df = pd.read_sql_query(paginated, connection)
+                all_columns = list(df.columns)
+                all_rows = df.values.tolist()
+                success_count += 1
+            except Exception as e:
+                print(f"[ERROR] Failed SELECT: {e}")
+                fail_count += 1
+        else:
+            print(f"[DEBUG] Executing non-SELECT SQL directly:\n{stmt}\n")
+            cursor = connection.cursor()
+            try:
+                cursor.execute(stmt)
+                connection.commit()
+                print(f"[DEBUG] Executed successfully ({cursor.rowcount} rows affected).")
+                success_count += 1
+            except Exception as e:
+                connection.rollback()
+                print(f"[ERROR] Failed to execute statement: {e}")
+                fail_count += 1
+            finally:
+                cursor.close()
 
-    connection.commit()
-    return columns, rows
+    stats = {
+        "success": success_count,
+        "failed": fail_count,
+        "total": success_count + fail_count,
+    }
+
+    print(f"[INFO] Query batch complete: {stats['success']} succeeded, {stats['failed']} failed.")
+    return all_columns, all_rows, stats
+
 
 
 def get_table_row_count(connection, table_name):

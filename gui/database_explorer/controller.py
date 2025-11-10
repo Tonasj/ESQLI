@@ -70,6 +70,10 @@ class DBController:
     def update_table_cell(self, table, column, pk_value, new_value, row_values=None, headers=None):
         from db.db_utils import update_table_cell
         return update_table_cell(self.conn, table, column, pk_value, new_value, row_values, headers)
+    
+    def bulk_insert(self, table_name, df):
+        from db.db_utils import bulk_insert
+        return bulk_insert(self.conn, table_name, df)
 
     # -------- DDL --------
     def create_table(self, name, columns):

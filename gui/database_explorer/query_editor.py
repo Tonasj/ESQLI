@@ -27,12 +27,35 @@ class QueryEditorPanel(QWidget):
         run_btn = QPushButton("▶️ Run Query")
         new_tab_btn = QPushButton("➕ New Query Tab")
         common_btn = QPushButton("❔ Common SQL Queries")
+        warning_label = QPushButton("⚠️")
+        warning_label.setToolTip(
+            "Queries may execute in parts.\n"
+            "If one statement fails (like dropping a table twice), others may still run successfully.\n"
+            "The output may show as failed even if earlier statements executed.\n"
+            "Make sure to separate statements with ';'"
+        )
+        warning_label.setFlat(True)
+        warning_label.setFocusPolicy(Qt.NoFocus)
+        warning_label.setCursor(Qt.WhatsThisCursor)  # Optional: nice visual hint
+        warning_label.setStyleSheet("""
+            QPushButton {
+                border: none;
+                background: transparent;
+                color: orange;
+                font-size: 12pt;
+            }
+            QPushButton:hover {
+                color: red;
+            }
+        """)
+        warning_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.auto_context_chk = QCheckBox("Auto-use active database")
         self.auto_context_chk.setChecked(True)
         self.auto_context_chk.setToolTip("When enabled, automatically update editors with the active database and table context")
         self.auto_context_chk.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         btn_row.addWidget(run_btn)
-        btn_row.addWidget(new_tab_btn)   
+        btn_row.addWidget(new_tab_btn)
+        btn_row.addWidget(warning_label)
         btn_row.addStretch()
         btn_row.addWidget(common_btn)
         layout.addLayout(btn_row)
