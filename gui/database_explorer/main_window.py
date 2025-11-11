@@ -702,16 +702,17 @@ class DatabaseExplorerWindow(QWidget):
             # return to list view
             self._show_database_list()
             return
-
-        confirm = QMessageBox.question(
-            self,
-            "Disconnect",
-            "Are you sure you want to disconnect from the server?",
-            QMessageBox.Yes | QMessageBox.No,
-        )
-        if confirm == QMessageBox.No:
-            return
-
+        
+        if not self._safe_to_close():
+            confirm = QMessageBox.question(
+                self,
+                "Disconnect",
+                "Are you sure you want to disconnect from the server?\nUnsaved data and queries may be lost!",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if confirm == QMessageBox.No:
+                return
+        self.setEnabled(False)
         try:
             if self.controller.conn:
                 try:
@@ -749,6 +750,41 @@ class DatabaseExplorerWindow(QWidget):
 
     # ---------------- Qt events ----------------
     def closeEvent(self, event):
+        """Ask for confirmation before exiting the app."""
         save_window_settings(self)
-        super().closeEvent(event)
+        
+        if self._safe_to_close():
+            event.accept()
+            return
 
+        reply = QMessageBox.question(
+            self,
+            "Exit Application",
+            "Are you sure you want to exit?\nUnsaved data and queries may be lost.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            event.accept()   # Allow window to close
+        else:
+            event.ignore()   # Cancel the close action
+
+    def _safe_to_close(self):
+        all_editors_empty = True
+
+        if hasattr(self, "query_panel") and hasattr(self.query_panel, "tabs"):
+            for i in range(self.query_panel.tabs.count()):
+                tab = self.query_panel.tabs.widget(i)
+                if hasattr(tab, "editor"):
+                    text = tab.editor.toPlainText().strip()
+                    if text:
+                        all_editors_empty = False
+                        break
+
+        has_query_results = False
+        if hasattr(self, "data_panel"):
+            if getattr(self.data_panel, "_current_query", None) and len(getattr(self.data_panel, "_rows", [])) > 0:
+                has_query_results = True
+        
+        return all_editors_empty and not has_query_results

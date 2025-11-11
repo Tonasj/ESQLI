@@ -11,6 +11,7 @@ from core import load_sql_engine
 
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
 ICON_PATH = os.path.join(ASSETS_DIR, "logo.ico")
+GITHUB_ICON_PATH = os.path.join(ASSETS_DIR,"github-mark.png")
 
 
 def run_app():
@@ -45,10 +46,11 @@ def run_app():
         
     # ---- Launch database explorer first (empty) ----
     explorer = DatabaseExplorerWindow()
+    explorer.setEnabled(False)
     explorer.show()
 
     # ---- Launch connection window ----
-    window = ConnectionWindow(icon_path=ICON_PATH)
+    window = ConnectionWindow(icon_path=ICON_PATH, github_icon=GITHUB_ICON_PATH)
     window.open_explorers = [explorer]  # keep reference
     window.show()
 

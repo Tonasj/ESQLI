@@ -1,16 +1,18 @@
 import os
+import webbrowser
 from PyQt5.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QComboBox, QPushButton,
-    QLineEdit, QSplitter, QMessageBox, QRadioButton,
+    QWidget, QLabel, QVBoxLayout, QComboBox, QPushButton, QMenu,
+    QLineEdit, QSplitter, QMessageBox, QRadioButton, QMenuBar, QAction,
     QButtonGroup, QFormLayout, QDesktopWidget, QHBoxLayout, QCheckBox,
-    QStyledItemDelegate, QStyle, QListView, QStyleOptionViewItem
+    QStyledItemDelegate, QStyle, QListView, QStyleOptionViewItem, QApplication
 )
 from PyQt5.QtGui import QIcon, QStandardItemModel, QStandardItem
-from PyQt5.QtCore import Qt, QThread, QRect, pyqtSignal, QTimer, QEvent
+from PyQt5.QtCore import Qt, QThread, QRect, pyqtSignal, QTimer, QEvent, QSize
 
 from core import SQLConnectWorker
 from gui.database_explorer.main_window import DatabaseExplorerWindow
 from gui.gui_helpers.window_utils import setup_app_settings, restore_window_settings, save_window_settings
+from gui.other_windows.engine_select import EngineSelectDialog
 
 from cryptography.fernet import Fernet
 
@@ -83,10 +85,11 @@ class DeleteButtonDelegate(QStyledItemDelegate):
 
 # ---------------- Connection window ----------------
 class ConnectionWindow(QWidget):
-    def __init__(self, icon_path=None):
+    def __init__(self, icon_path=None, github_icon=None):
         super().__init__()
         self.gui_settings, self.app_settings = setup_app_settings()
         self.icon_path = icon_path
+        self.github_icon = github_icon
         self.window_name = "ConnectionWindow"
         self.db_connection = None
         self.last_error_message = ""
@@ -106,17 +109,66 @@ class ConnectionWindow(QWidget):
         if self.icon_path:
             self.setWindowIcon(QIcon(self.icon_path))
 
+        # ---- Menu bar ----
+        menubar = QMenuBar(self)
+
+        # Create "Options" menu
+        options_menu = QMenu("Options", self)
+        menubar.addMenu(options_menu)
+        menubar.setStyleSheet("""
+            QMenuBar {
+                background-color: #f0f0f0;
+                border: none;
+                border-bottom: 1px solid lightgray;
+            }
+            QMenuBar::item:selected {
+                background-color: #e0e0e0;
+            }
+        """)
+
+        # Add "Change Database Engine" action
+        change_engine_action = QAction("Change Database Engine", self)
+        options_menu.addAction(change_engine_action)
+
+        # Connect the menu action
+        change_engine_action.triggered.connect(self.open_engine_select_dialog)
+
+        # Add the menu bar to the main layout
         layout = QVBoxLayout(self)
+        layout.setMenuBar(menubar)  # attaches it to the window top
+        layout.setSpacing(0)
         splitter = QSplitter(Qt.Horizontal)
         layout.addWidget(splitter)
 
         # -------- Form Layout --------
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignLeft)
+        form.setContentsMargins(0, 0, 0, 0)
         form.setVerticalSpacing(6)
 
+        
+        first_row = QHBoxLayout()
+        github_icon = QIcon(self.github_icon)
+        self.github_button = QPushButton()
+        self.github_button.setCursor(Qt.PointingHandCursor)
+        self.github_button.setIcon(github_icon)
+        self.github_button.setIconSize(QSize(32, 32))
+        self.github_button.setFlat(True)
+        self.github_button.setStyleSheet("""
+            QPushButton {
+                border: none;
+                background: transparent;
+                padding: 0px;
+            }
+        """)
+        self.github_button.setToolTip("View on GitHub")
         self.label = QLabel("Welcome to ESQLI")
-        form.addRow(self.label)
+        self.github_button.clicked.connect(lambda: webbrowser.open("https://github.com/Tonasj/ESQLI"))
+        first_row.addWidget(self.label)
+        first_row.addStretch()
+        first_row.addWidget(self.github_button)
+        first_row.setContentsMargins(0, 0, 0, 10)
+        form.addRow(first_row)
 
         # -------- Host input with per-item delete --------
         self.host_input = QComboBox()
@@ -401,6 +453,19 @@ class ConnectionWindow(QWidget):
         self.host_input.setDisabled(False)
         QMessageBox.critical(self, "Connection Error", f"Failed to connect:\n{error_msg}")
 
+    # ---------------- Engine select dialog ----------------
+    def open_engine_select_dialog(self):
+        """Open the SQL engine selection dialog."""
+        dialog = EngineSelectDialog(self.app_settings, self)
+        if dialog.exec_() == dialog.Accepted:
+            selected_engine = dialog.get_selected_engine()
+            self.app_settings.setValue("engine", selected_engine)
+            QMessageBox.information(
+                self,
+                "Engine Changed",
+                f"Database engine changed to: {selected_engine}\n\nRestart the application to apply changes.",
+            )
+
     # ---------------- Explorer launch ----------------
     def open_database_explorer(self, db_name=None):
         print(f"[DEBUG] Connected: {self.db_connection}")
@@ -410,11 +475,13 @@ class ConnectionWindow(QWidget):
 
             if self.open_explorers:
                 explorer = self.open_explorers[0]
+                
                 explorer.controller.conn = self.db_connection
                 explorer.selected_database = db_name
                 explorer.connection_window = self
                 explorer.tree_panel.clear()
                 explorer.refresh_databases()
+                explorer.setEnabled(True)
                 explorer.show()
                 explorer.raise_()
                 explorer.activateWindow()
@@ -423,6 +490,7 @@ class ConnectionWindow(QWidget):
                     connection=self.db_connection, database=db_name, connection_window=self
                 )
                 self.open_explorers.append(explorer)
+                explorer.setEnabled(True)
                 explorer.show()
 
             save_window_settings(self)
@@ -459,4 +527,5 @@ class ConnectionWindow(QWidget):
 
     def closeEvent(self, event):
         save_window_settings(self)
+        QApplication.quit()
         super().closeEvent(event)

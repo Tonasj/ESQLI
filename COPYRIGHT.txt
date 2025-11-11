@@ -1,0 +1,15 @@
+© 2025 Tomas Huikko  
+All rights reserved.
+
+This application and its source code are distributed under the MIT License.  
+See the included LICENSE file for the full license text.
+
+Assets and attributions:
+- **GitHub “Invertocat” logo** © GitHub, Inc.  
+  Used in accordance with GitHub’s brand guidelines. No affiliation or endorsement implied.
+
+- **“Import Content” and “Export Content” SVG icons** from *Instructure UI Line Interface Icons*  
+  © Instructure, used under the MIT License. Downloaded via svgrepo.com.
+
+- **SQL stack logo** inspired by work by Alaa Kaddour,  
+  licensed under CC BY-SA 4.0, via Wikimedia Commons.
