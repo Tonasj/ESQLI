@@ -8,10 +8,10 @@ from .connection_window.connection_window import ConnectionWindow
 from .database_explorer.main_window import DatabaseExplorerWindow
 from .other_windows.engine_select import EngineSelectDialog
 from core import load_sql_engine
+from core.path_utils import resource_path
 
-ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
-ICON_PATH = os.path.join(ASSETS_DIR, "logo.ico")
-GITHUB_ICON_PATH = os.path.join(ASSETS_DIR,"github-mark.png")
+ICON_PATH = resource_path("assets/logo.ico")
+GITHUB_ICON_PATH = resource_path("assets/github-mark.png")
 
 
 def run_app():
@@ -19,10 +19,9 @@ def run_app():
     app.setWindowIcon(QIcon(ICON_PATH))
 
     # ---- Prepare config ----
-    base_folder = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    config_folder = os.path.join(base_folder, "config")
-    os.makedirs(config_folder, exist_ok=True)
-    app_settings_path = os.path.join(config_folder, "app_settings.ini")
+    base_folder = os.path.expanduser("~/.esqli")
+    os.makedirs(base_folder, exist_ok=True)
+    app_settings_path = os.path.join(base_folder, "app_settings.ini")
     app_settings = QSettings(app_settings_path, QSettings.IniFormat)
 
     # ---- Show engine selection dialog ----

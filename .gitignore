@@ -15,3 +15,9 @@ __pycache__/
 *.csv
 *.json
 *.xlsx
+
+#Build
+/build
+/dist
+*.spec
+build_log.txt

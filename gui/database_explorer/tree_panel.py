@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import pyqtSignal, Qt, QPoint
 from PyQt5.QtGui import QIcon
-
+from core.path_utils import resource_path
 
 class DatabaseTreePanel(QWidget):
     databaseSelected = pyqtSignal(str)
@@ -19,10 +19,8 @@ class DatabaseTreePanel(QWidget):
         super().__init__()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        assets_dir = os.path.join(base_dir, "assets")
-        import_icon_path = os.path.join(assets_dir, "import-content.png")
-        export_icon_path = os.path.join(assets_dir, "export-content.png")
+        import_icon_path = resource_path("assets/import-content.png")
+        export_icon_path = resource_path("assets/export-content.png")
         self.import_icon = QIcon(import_icon_path)
         self.export_icon = QIcon(export_icon_path)
         self.tree = QTreeWidget()
